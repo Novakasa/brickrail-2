@@ -33,10 +33,13 @@ fn main() {
     // writes the plugin graphs for both worlds and exits without running.
     if std::env::var_os("DUMP_GRAPH").is_some() {
         std::fs::create_dir_all("docs/plugin-graph").unwrap();
-        app.dump_graph("docs/plugin-graph/client.md").unwrap();
-        app.sub_app(LayoutSubApp)
-            .dump_graph("docs/plugin-graph/simulation.md")
-            .unwrap();
+        for ext in ["md", "mmd"] {
+            app.dump_graph(format!("docs/plugin-graph/client.{ext}"))
+                .unwrap();
+            app.sub_app(LayoutSubApp)
+                .dump_graph(format!("docs/plugin-graph/simulation.{ext}"))
+                .unwrap();
+        }
         return;
     }
     app.run();
