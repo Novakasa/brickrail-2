@@ -7,3 +7,6 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[workspace.dependencies]
+bevy_plugin_graph = { git = "https://github.com/Novakasa/bevy-plugin-graph" }

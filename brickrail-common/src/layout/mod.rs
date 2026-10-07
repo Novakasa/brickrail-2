@@ -7,6 +7,7 @@ pub mod train;
 
 use bevy::app::AppLabel;
 use bevy::prelude::*;
+use bevy_plugin_graph::PluginGraphExt;
 use serde::{Deserialize, Serialize};
 
 use crate::lifecycle::{ElementEntry, ElementPlugin};
@@ -28,13 +29,13 @@ pub struct LayoutAppPlugin;
 
 impl Plugin for LayoutAppPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ElementPlugin::<Track>::new());
-        app.add_plugins(ElementPlugin::<Connection>::new());
-        app.add_plugins(ElementPlugin::<Marker>::new());
-        app.add_plugins(ElementPlugin::<Block>::new());
-        app.add_plugins(ElementPlugin::<Train>::new());
-        app.add_plugins(LogicalGraphPlugin);
-        app.add_plugins(SimulationStatePlugin);
+        app.add_owned(ElementPlugin::<Track>::new());
+        app.add_owned(ElementPlugin::<Connection>::new());
+        app.add_owned(ElementPlugin::<Marker>::new());
+        app.add_owned(ElementPlugin::<Block>::new());
+        app.add_owned(ElementPlugin::<Train>::new());
+        app.add_owned(LogicalGraphPlugin);
+        app.add_owned(SimulationStatePlugin);
     }
 }
 

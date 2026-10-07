@@ -1,6 +1,7 @@
 use bevy::app::{Main, MainSchedulePlugin, SubApp};
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
+use bevy_plugin_graph::PluginGraphExt;
 use brickrail_common::layout::LayoutSubApp;
 
 /// Server app plugin. Creates a layout SubApp with the simulation state machine.
@@ -17,10 +18,15 @@ impl Plugin for ServerPlugin {
 
         sub_app.init_resource::<bevy::ecs::reflect::AppTypeRegistry>();
 
+        // Record the SubApp's plugin graph only if the main app opted in.
+        if app.graph().is_some() {
+            sub_app.init_graph("LayoutSubApp");
+        }
+
         // SimulationPlugin includes StatesPlugin, LayoutAppPlugin, and SimulationLogicPlugin.
-        sub_app.add_plugins(brickrail_common::simulation::SimulationPlugin);
-        sub_app.add_plugins(brickrail_common::command::SimulationCommandPlugin);
-        sub_app.add_plugins(brickrail_common::command::SubAppServerPlugin);
+        sub_app.add_owned(brickrail_common::simulation::SimulationPlugin);
+        sub_app.add_owned(brickrail_common::command::SimulationCommandPlugin);
+        sub_app.add_owned(brickrail_common::command::SubAppServerPlugin);
         app.insert_sub_app(LayoutSubApp, sub_app);
     }
 }

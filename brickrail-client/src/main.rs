@@ -1,6 +1,7 @@
 use bevy::ecs::relationship::RelationshipTarget;
 use bevy::prelude::*;
 use bevy_pancam::{PanCam, PanCamPlugin};
+use bevy_plugin_graph::PluginGraphExt;
 use brickrail_common::command::{
     AppCommand, AppCommandPlugin, AppCommandQueue, CommandPlugin, CommandRegistry,
     SendTrainToBlockRequest, SimulationCommand, SubAppClientPlugin,
@@ -8,7 +9,7 @@ use brickrail_common::command::{
 use brickrail_common::layout::block::{Block, BlockData};
 use brickrail_common::layout::marker::{Marker, MarkerData};
 use brickrail_common::layout::track::Track;
-use brickrail_common::layout::{Layout, LayoutAppPlugin};
+use brickrail_common::layout::{Layout, LayoutAppPlugin, LayoutSubApp};
 use brickrail_common::lifecycle::{ElementData, ElementEntry, ElementId};
 use brickrail_common::primitives::*;
 use brickrail_common::simulation::route::{RouteLeg, TrainLegs};
@@ -17,17 +18,28 @@ use brickrail_common::simulation::train_position::TrainPosition;
 const LAYOUT_SCALE: f32 = 40.0;
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(PanCamPlugin)
-        .add_plugins(LayoutAppPlugin)
-        .add_plugins(ClientSimulationPlugin)
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins).add_plugins(PanCamPlugin);
+    app.init_graph("Client");
+    app.add_owned(LayoutAppPlugin)
+        .add_owned(ClientSimulationPlugin)
         .add_systems(Startup, (spawn_camera, queue_init_commands))
         .add_systems(
             Update,
             (draw_tracks, draw_markers, draw_blocks, draw_trains),
-        )
-        .run();
+        );
+
+    // `DUMP_GRAPH=1 cargo run -p brickrail-client` (from the workspace root)
+    // writes the plugin graphs for both worlds and exits without running.
+    if std::env::var_os("DUMP_GRAPH").is_some() {
+        std::fs::create_dir_all("docs/plugin-graph").unwrap();
+        app.dump_graph("docs/plugin-graph/client.md").unwrap();
+        app.sub_app(LayoutSubApp)
+            .dump_graph("docs/plugin-graph/simulation.md")
+            .unwrap();
+        return;
+    }
+    app.run();
 }
 
 /// Plugin that sets up the simulation SubApp and client-side command handling.
@@ -35,9 +47,9 @@ struct ClientSimulationPlugin;
 
 impl Plugin for ClientSimulationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(CommandPlugin);
-        app.add_plugins(AppCommandPlugin);
-        app.add_plugins(SubAppClientPlugin);
+        app.add_owned(CommandPlugin);
+        app.add_owned(AppCommandPlugin);
+        app.add_owned(SubAppClientPlugin);
     }
 }
 

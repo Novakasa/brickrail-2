@@ -1,6 +1,7 @@
 use bevy::app::{Main, MainSchedulePlugin};
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
+use bevy_plugin_graph::PluginGraphExt;
 
 use crate::layout::LayoutSubApp;
 use crate::simulation::SimulationPlugin;
@@ -43,13 +44,18 @@ impl Plugin for SubAppClientPlugin {
         sub_app.add_plugins(MainSchedulePlugin);
         sub_app.init_resource::<bevy::ecs::reflect::AppTypeRegistry>();
 
+        // Record the SubApp's plugin graph only if the main app opted in.
+        if app.graph().is_some() {
+            sub_app.init_graph("LayoutSubApp");
+        }
+
         // Domain logic (communication-agnostic).
         // SimulationPlugin includes StatesPlugin and LayoutAppPlugin.
-        sub_app.add_plugins(SimulationPlugin);
+        sub_app.add_owned(SimulationPlugin);
 
         // Command handling + response collection (transport-specific).
-        sub_app.add_plugins(SimulationCommandPlugin);
-        sub_app.add_plugins(SubAppServerPlugin);
+        sub_app.add_owned(SimulationCommandPlugin);
+        sub_app.add_owned(SubAppServerPlugin);
 
         // Bidirectional extract bridge.
         sub_app.set_extract(|main_world, sub_world| {

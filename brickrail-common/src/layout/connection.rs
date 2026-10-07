@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_plugin_graph::PluginGraphExt;
 use petgraph::graphmap::UnGraphMap;
 
 use crate::lifecycle::{DespawnElement, ElementId, LayoutElement};
@@ -18,7 +19,7 @@ impl LayoutElement for Connection {
     type Data = ConnectionData;
 
     fn build_lifecycle(app: &mut App) {
-        app.add_plugins(ConnectionGraphPlugin);
+        app.add_owned(ConnectionGraphPlugin);
     }
 }
 

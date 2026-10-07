@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bevy_plugin_graph = { workspace = true }
 brickrail-common = { path = "../brickrail-common" }
 bevy = { version = "0.19", features = ["serialize"] }
 bevy_pancam = "0.21"

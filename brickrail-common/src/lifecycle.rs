@@ -1,5 +1,6 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy_plugin_graph::PluginGraphExt;
 
 // --- Trait bounds ---
 
@@ -266,7 +267,7 @@ impl<T: LayoutElement> ElementPlugin<T> {
 
 impl<T: LayoutElement> Plugin for ElementPlugin<T> {
     fn build(&self, app: &mut App) {
-        app.add_plugins(LifecyclePlugin::<T>::new());
+        app.add_owned(LifecyclePlugin::<T>::new());
         T::build_lifecycle(app);
     }
 }

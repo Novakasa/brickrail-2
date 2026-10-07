@@ -7,6 +7,7 @@ pub mod virtual_driver;
 use bevy::ecs::relationship::RelationshipTarget;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy_plugin_graph::PluginGraphExt;
 use petgraph::algo::astar;
 
 use crate::command::{
@@ -63,8 +64,8 @@ impl Plugin for SimulationStatePlugin {
                 .run_if(on_message::<SimulationEvent>)
                 .before(SimulationSet::StateMutation),
         );
-        app.add_plugins(RouteStatePlugin);
-        app.add_plugins(TrainPositionStatePlugin);
+        app.add_owned(RouteStatePlugin);
+        app.add_owned(TrainPositionStatePlugin);
     }
 }
 
@@ -136,10 +137,10 @@ impl Plugin for SimulationPlugin {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<SimulationState>();
         app.init_resource::<PendingEnterData>();
-        app.add_plugins(crate::layout::LayoutAppPlugin);
-        app.add_plugins(SimulationLogicPlugin);
+        app.add_owned(crate::layout::LayoutAppPlugin);
+        app.add_owned(SimulationLogicPlugin);
         app.add_plugins(bevy::time::TimePlugin);
-        app.add_plugins(virtual_driver::VirtualDriverPlugin);
+        app.add_owned(virtual_driver::VirtualDriverPlugin);
         // PlaceTrainAtBlock message is registered by SimulationStatePlugin (via LayoutAppPlugin).
         app.add_systems(OnEnter(SimulationState::Entering), spawn_layout_on_enter);
         app.add_systems(
