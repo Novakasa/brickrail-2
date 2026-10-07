@@ -1,5 +1,20 @@
 {
   "nodes": {
+    "conventions": {
+      "locked": {
+        "lastModified": 1791415140,
+        "narHash": "sha256-yNxfJrGWu3hJJfrAoH7mqPRcvfI6YbfS4FHK36grIjk=",
+        "ref": "refs/heads/main",
+        "rev": "f54a76ab6ebbdd169044e4206657a40ce09dc2b6",
+        "revCount": 12,
+        "type": "git",
+        "url": "ssh://git@github.com/Novakasa/claude-plugins.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "ssh://git@github.com/Novakasa/claude-plugins.git"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -52,6 +67,7 @@
     },
     "root": {
       "inputs": {
+        "conventions": "conventions",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
