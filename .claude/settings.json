@@ -1,10 +1,14 @@
 {
   "enabledPlugins": {
-    "bevy@novakasa-plugins": true
+    "bevy@novakasa-plugins": true,
+    "driftless@novakasa-plugins": true
   },
   "extraKnownMarketplaces": {
     "novakasa-plugins": {
-      "source": { "source": "github", "repo": "Novakasa/claude-plugins" }
+      "source": {
+        "source": "github",
+        "repo": "Novakasa/claude-plugins"
+      }
     }
   }
 }
