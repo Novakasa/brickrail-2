@@ -1,6 +1,6 @@
 # Train Simulation Domain Model
 
-This document defines the domain model for markers, blocks, trains, and routes — the core types that drive the train simulation.
+This document defines the domain model for markers, blocks, trains, and route legs — the core types that drive the train simulation.
 
 ## Markers
 
@@ -8,7 +8,7 @@ A **marker** is a marked position on the layout that a sensor on a train can det
 
 - One marker per track (at most).
 - `MarkerID = TrackID` — a marker is identified by the track it sits on.
-- Markers serve different logical roles depending on context (block boundary, progress indicator, etc.), but the marker itself doesn't know its role — that's determined during route resolution.
+- Markers serve different logical roles depending on context (block boundary, progress indicator, etc.), but the marker itself doesn't know its role — that's determined during leg construction.
 
 ### Hardware Implementation
 
@@ -29,7 +29,7 @@ When a user creates a block, two **endpoint markers** are automatically spawned 
 
 ### Blocks at Runtime
 
-Blocks are the **lockable unit** of the simulation: they define which sections need to be locked and unlocked in response to marker events. Route legs are structured around blocks (start block → travel → target block), and the simulation uses block identity to determine:
+Blocks are the **lockable unit** of the simulation: they define which sections need to be locked and unlocked in response to marker events. Route legs are structured around blocks (start block → travel → target block), and the planner uses block identity to determine:
 
 - Which sections to lock ahead of the train
 - When to release locks behind the train (only after the train has **entered the target block**, not merely when it has "left" the source block — because travel sections between blocks are not guaranteed to be long enough to contain the train)
@@ -38,7 +38,7 @@ Blocks are the **lockable unit** of the simulation: they define which sections n
 
 Blocks have configuration that varies by **travel direction** (aligned or against the section direction). This is stored as two `DirectedBlockConfig` values on the block data.
 
-Currently this includes **passthrough speed** — a target speed that applies when a train passes through the block without intending to stop. During route resolution, if a block is not the train's destination, the passthrough speed for the relevant travel direction is applied. This allows modeling speed adjustments for track features — slowing down for curves, or speeding up to climb ramps (where one direction needs fast and the other slow).
+Currently this includes **passthrough speed** — a target speed that applies when a train passes through the block without intending to stop. During leg construction, the passthrough speed for the relevant travel direction is baked into the leg's markers; if the train actually stops in the block, the driver overrides it (see Marker Speed). This allows modeling speed adjustments for track features — slowing down for curves, or speeding up to climb ramps (where one direction needs fast and the other slow).
 
 ### Train-Block Position States
 
@@ -72,15 +72,15 @@ A **train** is a physical or virtual train entity.
 
 - `TrainID = u32` — a numeric identifier. The train's human-readable name is stored in data.
 - Layout data includes the train name and hardware configuration (hub kind, channel, speed calibration — to be expanded later).
-- Runtime state (position, speed, route assignment) belongs to the simulation tier, not the layout.
+- Runtime state (position, speed, leg queue) belongs to the simulation tier, not the layout.
 
 ### Train Facing
 
 A train has a **facing** relative to its travel direction — it determines whether the sensor is on the leading or trailing side of the train. Facing affects which marker serves as the canonical enter marker for a given block (see Canonical Enter Marker above).
 
-## Routes
+## Route Legs
 
-A **route** describes a path a train takes from one block to another.
+A **route leg** is one block-to-block traversal. Legs are the unit of train movement: a train only ever moves across legs that have been committed to its queue (see Train Control Hierarchy below). Deciding *which* legs a train should take is a planning concern, handled separately — it produces legs but plays no part in moving the train.
 
 ### Sensor Trajectory and Train Body
 
@@ -88,9 +88,9 @@ Pathfinding operates on the **sensor trajectory** — the path the train's senso
 
 However, the train has non-zero length — its body extends behind the sensor. A route leg therefore also stores the **full block sections** (start and target) from block data, even though the sensor may only traverse part of them. These sections are needed for **locking**: the entire block must be reserved to ensure the train body fits, not just the tracks the sensor crosses.
 
-### Route Legs
+### Leg Contents
 
-A route is composed of **route legs**. Each route leg stores:
+Each route leg stores:
 
 1. **Start block section** — the full section of the starting block (for locking).
 2. **Travel section** — the tracks between the start and target blocks (from the sensor trajectory).
@@ -103,7 +103,7 @@ Markers are collected along the sensor trajectory (enter marker to enter marker)
 
 - **Exiting**: the first marker in the leg — the canonical enter marker of the start block. The train starts here and is exiting the start block.
 - **Entering**: the marker immediately before the Entered marker in travel order — signals the train's leading end is crossing into the target block area.
-- **Entered**: the last marker in the leg — the canonical enter marker of the target block. Signals the train has fully entered the target block. Anchors lock release.
+- **Entered**: the last marker in the leg — the canonical enter marker of the target block. Signals the train has fully entered the target block. Anchors leg completion (and therefore lock release).
 
 A typical leg's marker sequence:
 
@@ -137,20 +137,35 @@ When a train intends to stop at the current leg (i.e. no next leg is queued), th
 
 ### Locking
 
-When a train travels a route leg, it locks all three stages:
+Locking is a **planner concern**. Train movement never sees it: a leg in a train's queue is driven on the assumption that nothing else is in the way, and it is the planner's job to make that assumption true before committing the leg.
+
+Each leg has a **footprint** — the tracks it needs exclusively:
 - The **start block section**
 - The **travel section**
 - The **target block section**
 
-Locks are **not** released progressively as the train's rear clears each section. Instead, a section is only unlocked once the train has **entered** the target block (i.e. the Entered marker fires). This is because travel sections between blocks are not guaranteed to be long enough to contain the train — only blocks provide that guarantee. Once the Entered marker fires, the start block and travel section can be released together.
+The planner holds a per-track lock table. Before committing a leg to a train's queue, it acquires the leg's whole footprint; a leg whose footprint overlaps another train's holdings cannot be committed. Legs that share tracks — at every switch and crossing — conflict through their footprints, never through any knowledge the train has of other trains.
 
-## Route Resolution
+Locks are **not** released progressively as the train's rear clears each section. A leg's footprint is held until the leg is complete — the train has entered the target block and advanced onto the next leg. This is because travel sections between blocks are not guaranteed to be long enough to contain the train — only blocks provide that guarantee. On completion, the planner releases whatever the leg held that no remaining leg of the same train still needs (the target block section is also the next leg's start section, so it stays held). The planner learns of completion from the leg advancement that movement already performs; movement does not call into the planner.
 
-1. Pathfinding (A* on the logical graph) produces a path of logical tracks — the **sensor trajectory** from the start block's enter marker to the target block's enter marker.
-2. The path is split into **route legs** at canonical enter markers (using a logical track → logical block lookup).
-3. Each leg resolves its full block sections from block data (for locking) and extracts travel tracks from the path slice.
-4. Markers are collected along the sensor trajectory (the path slice, not the full block sections).
-5. Marker roles are assigned by position within the leg.
+## Leg Construction
+
+A leg connects two **adjacent** logical blocks: its sensor trajectory is a path of logical tracks from one block's canonical enter marker to the next, with no other enter marker in between. Leg construction is local — it needs only that path slice and the block data at both ends:
+
+1. Resolve the full block sections of the start and target blocks from block data (for locking).
+2. Extract the travel tracks from the path slice.
+3. Collect markers along the sensor trajectory (the path slice, not the full block sections).
+4. Assign marker roles by position within the leg.
+
+Each leg is self-contained — its block sections, markers, and speeds depend only on the blocks it connects, not on any larger path or plan it is part of.
+
+### Leg Graph
+
+Taken together, all possible legs form the **leg graph**: nodes are logical blocks (block, direction, facing), edges are legs. Two nodes may be connected by several edges when parallel track paths exist between the blocks. The leg graph is derived purely from the layout, so it can be computed up front (or lazily, as legs are needed) and only changes when the layout does.
+
+Planning operates on the leg graph, never on the track graph directly. Searching for a single track-level path to a target and splitting it at enter markers is equivalent to walking one path through the leg graph — a special case, and how the current implementation builds a linear plan.
+
+Whether legs are built once per layout and shared between trains, or built on demand per train, is a decision internal to planning and leg construction. Train movement — the leg queue, leg advancement, the driver — only ever sees legs in a train's queue and must not depend on where they came from.
 
 ## State Events
 
@@ -170,13 +185,17 @@ Examples of state events:
 
 Train behavior is driven by a layered abstraction, from low-level to high-level:
 
-### Route Legs
+### Leg Queue
 
-The **route leg** is the atomic unit of train movement — one block-to-block traversal. A train is always assigned to a route leg. A stationary train has a single-block "idle" leg (no travel section, no target block — just occupying a block).
+The **route leg** is the atomic unit of train movement — one block-to-block traversal. A train is always assigned to a route leg. A stationary train has a single-block **idle leg**: start and target are the same block, the travel section is empty, and the only marker is the block's enter marker. The idle leg is how a stationary train is represented — its position is just a logical block, with no memory of where it came from — and advancing onto it is what completes the previous leg on arrival (letting the planner release its locks), exactly as advancing onto any other leg does.
 
-### Routes
+Each train has a **leg queue**: the legs it has committed to, in traversal order. The train executes legs in order, advancing to the next leg as it enters each target block. Appending a leg to the queue *is* the commit: the planner only appends a leg once it holds the leg's locks, so everything in the queue is safe to traverse. Movement — leg advancement and the driver handoff — operates on the queue alone. It has no notion of locks or of other trains; a leg in the queue is driven, full stop. Lock data may live alongside leg data in the ECS for convenience, but no movement system reads it.
 
-A **route** is a mutable queue of route legs. The train executes legs in order, advancing to the next leg as it enters each target block. Routes are not immutable — upcoming legs can be removed or replaced while the train is in transit. Only the currently active leg (and any already-locked sections) are committed.
+### Plans
+
+A **plan** is the planning layer's view of where a train is going: a subgraph of the leg graph rooted at the last committed leg's target block, in which every path leads to the destination. The planner's job is to pick an outgoing edge from the root, acquire its footprint, and commit it to the leg queue. The planner owns the lock table (see Locking); movement never touches it.
+
+A plan may be a single linear path or a graph with alternatives — which one depends on how the planner searches the leg graph (shortest path, all paths within a cost bound, etc.). With alternatives, the train makes dynamic decisions about which leg to commit next — if one branch is blocked by another train's locks, the planner can commit a different edge toward the same destination without discarding the plan. Only the committed queue is fixed; the plan beyond it can be revised at any time.
 
 ### Destinations
 
@@ -185,7 +204,7 @@ A **destination** is a target the train wants to reach. It can be:
 - A set of acceptable blocks (any one satisfies the destination)
 - Optionally constrained by target direction and/or facing
 
-A destination drives route computation: the system pathfinds from the train's current position to the destination and produces a route. If the current route becomes blocked (e.g. another train holds a lock), the system may recompute the route with different legs that reach the same destination via a free path. This is why routes are mutable queues — they serve the destination, not the other way around.
+A destination drives planning: the planner searches the leg graph from the train's current logical block to the destination and produces a plan. The plan serves the destination, not the other way around — it can be revised or replaced as long as it still reaches the destination.
 
 ### Strategies
 
@@ -194,7 +213,7 @@ The highest level of control assigns **destinations** to trains over time. A **s
 - A **random strategy** assigns arbitrary destinations periodically.
 - Other strategies can be added (e.g. demand-driven, priority-based).
 
-Strategies only produce destinations — they don't interact with routes or legs directly.
+Strategies only produce destinations — they don't interact with plans or legs directly.
 
 ## Train Driver
 
@@ -227,7 +246,7 @@ The driver maintains a queue of legs. Each leg contains a sequence of markers wi
 
 The driver's leg data is a thin subset of a `RouteLeg` — just markers and facing. It doesn't include block sections, block IDs, or locking information. Those stay in the simulation layer.
 
-This means the simulation logic controls when the train can proceed by controlling when it sends legs. In practice, the logic only sends a leg once the required locks are acquired. The driver doesn't know about locks — it just knows whether it has more legs to execute.
+This means the planner controls when the train can proceed by controlling when it commits legs. Dispatch to the driver follows directly from a leg entering the train's queue. Neither the queue nor the driver knows about locks — the driver just knows whether it has more legs to execute.
 
 ### BLE Hardware Driver
 
@@ -248,7 +267,7 @@ The train reports events back to the control PC asynchronously:
 - Marker passed (with index)
 - Unexpected marker (color mismatch — safety event)
 
-Only legs with acquired locks are sent to the train. This replaces the previous design where all legs were sent and each had a dynamic `intent_stop` flag that could be toggled remotely. The new approach is simpler: if a leg is on the train, it's safe to traverse.
+Only committed legs — legs in the train's queue — are sent to the train. This replaces the previous design where all legs were sent and each had a dynamic `intent_stop` flag that could be toggled remotely. The new approach is simpler: if a leg is on the train, it's safe to traverse.
 
 ### Virtual Driver
 
