@@ -58,3 +58,5 @@ guides stay in `docs/`. Conventions: the `driftless:conventions` skill.
 - Exact scope of persistent state: just train block positions, or more?
 - Controlled time mode (fixed timestep / mock `Time`) for pause, slow-mo, stepping, and deterministic replay
 - Split components that mix layout and simulation data (`AssignedSchedule`, `TrackLocks`, `WaitTime`, `QueuedDestination`, `BLEHub`, `PulseMotor`)
+- Evaluate which Bluetooth library to use for the BLE driver
+- Evaluate the handwritten Rust Pybricks protocol implementation: rewrite, or sane enough to reuse? Written with little Rust async experience
