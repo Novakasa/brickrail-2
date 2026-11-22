@@ -1,14 +1,18 @@
-<!-- driftless v3 -->
+<!-- driftless v5 -->
 # Project Status
 
 Canonical, current source of truth for the state of each topic. **Consult it
-when planning; record new todos and ideas in the Inbox, not in agent memory.**
+when planning; capture new todos and ideas in the Inbox, not in agent memory.**
 It's meant to churn; keeping it current is its whole job.
 
-**Status legend:** `shipped` · `active` (in progress) · `design` (agreed, no
-code yet) · `blocked` · `deferred` · `idea` · `resolved` (bug/investigation
-closed). Links point at the frozen RFCs in `docs/rfc/` (and ADRs); how-to
-guides stay in `docs/`. Conventions: the `driftless:conventions` skill.
+**Topics:** one row per topic in play. `Now` is one present-tense sentence,
+rewritten on every touch; `Updated` is stamped today on every touch.
+Statuses: `active` · `blocked` · `deferred` · `idea` — a topic that ships or
+resolves leaves the table.
+**Inbox:** append-only — a row is appended, promoted (to a topic row or a
+draft RFC), or removed, never edited. Links point at the design
+(`docs/design/`) and the frozen RFCs and ADRs; how-to guides stay in `docs/`.
+Full rules: the `driftless:conventions` skill.
 <!-- /driftless -->
 
 ## Topics
@@ -25,11 +29,11 @@ guides stay in `docs/`. Conventions: the `driftless:conventions` skill.
 
 | Topic | Status | Next / open threads | Links |
 |---|---|---|---|
-| Route building (A*, leg construction) | shipped | Leg graph as the planning substrate; current impl walks one linear path | [train-simulation.md](train-simulation.md) |
-| Train position state (placement, marker hits, leg completion) | shipped | | [train-simulation.md](train-simulation.md) |
-| Driver interface + virtual driver | shipped | BLE driver not started | [train-simulation.md](train-simulation.md) |
-| Locking / planner | design | Per-track lock table owned by the planner; footprint released when the train passes the Entered marker, whether or not a next leg is queued | [train-simulation.md](train-simulation.md) |
-| Plans, destinations, strategies | design | Leg-graph subgraph plans; schedule and random strategies | [train-simulation.md](train-simulation.md) |
+| Route building (A*, leg construction) | shipped | Leg graph as the planning substrate; current impl walks one linear path | [train-simulation.md](design/train-simulation.md) |
+| Train position state (placement, marker hits, leg completion) | shipped | | [train-simulation.md](design/train-simulation.md) |
+| Driver interface + virtual driver | shipped | BLE driver not started | [train-simulation.md](design/train-simulation.md) |
+| Locking / planner | design | Per-track lock table owned by the planner; footprint released when the train passes the Entered marker, whether or not a next leg is queued | [train-simulation.md](design/train-simulation.md) |
+| Plans, destinations, strategies | design | Leg-graph subgraph plans; schedule and random strategies | [train-simulation.md](design/train-simulation.md) |
 | SimulationEvent sync pipeline (fan-out, collector, SubApp extract) | shipped | | [architecture.md](architecture.md) |
 | Networking transport for SimulationEvent | idea | Replace SubApp extract with a network transport; core plugins stay unchanged | [architecture.md](architecture.md) |
 | High-level plugin composition (simulation, client, communication layer) | design | Three tiers per element type; one top-level state plugin and one logic plugin | [ARCHITECTURE.md](../ARCHITECTURE.md) |

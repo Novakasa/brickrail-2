@@ -71,7 +71,7 @@ Server-side systems that read simulation state and emit `SimulationEvent` messag
 
 ## Driver Layer
 
-Bridges simulation logic and train execution (virtual or BLE hardware). Receives leg data, autonomously executes it, reports marker hits back. See [train-simulation.md](train-simulation.md) for details.
+Bridges simulation logic and train execution (virtual or BLE hardware). Receives leg data, autonomously executes it, reports marker hits back. See [train-simulation.md](design/train-simulation.md) for details.
 
 ## Communication
 

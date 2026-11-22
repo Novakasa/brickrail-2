@@ -32,20 +32,24 @@ call, a deliberate exception, a road not taken.
 (none yet)
 <!-- /bevy -->
 
-<!-- driftless v3 -->
+<!-- driftless v5 -->
 ## Docs & Decisions (driftless)
 
 This project uses the driftless artifact types — overview in the
 `driftless:conventions` skill, per-type specs in `driftless:rfc` /
-`driftless:adr`:
+`driftless:adr` / `driftless:design`:
 
 - **RFC** (`docs/rfc/`) — frozen, dated design-reasoning snapshots.
 - **ADR** (`docs/adr/`) — frozen, one decision each (Context / Decision /
   Alternatives). High bar: only genuine architectural decisions.
-- **Glossary** (`CONTEXT.md`, repo root) — living, tight definitions.
-- **`docs/STATUS.md`** — living per-topic state (shipped / active / blocked /
-  next) plus an idea + todo inbox. **Consult it when planning; record todos
-  and ideas there, not in agent memory.**
+- **The design** (`docs/design/`: `README.md` root, one file per system)
+  — living, high-level description of the systems the developer chose to
+  cover; defines their terms. Design changes edit it, code changes never do;
+  rewrite, never append.
+- **`docs/STATUS.md`** — living per-topic state (one row, one present-tense
+  sentence per topic) plus an append-only idea + todo inbox. **Consult it
+  when planning; capture todos and ideas there, not in agent memory.** The
+  editing verbs are in `driftless:conventions`.
 
 Other documents live freely in `docs/` — driftless defines nothing there.
 
@@ -59,5 +63,7 @@ Routing:
   lands the RFC.
 - A foundational decision in force → an ADR; the altitude gate in
   `driftless:adr` sets the bar.
-- Vocabulary → the glossary; ideas, todos, and topic state → `STATUS.md`.
+- What a covered system is, and its vocabulary → the design; otherwise the
+  RFC. Ideas, todos, and topic state → `STATUS.md`. A design change goes RFC
+  or ADR first, then the design.
 <!-- /driftless -->
