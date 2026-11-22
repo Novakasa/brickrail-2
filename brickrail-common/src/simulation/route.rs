@@ -2,7 +2,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::SimulationSet;
-use super::train_position::{TrainLegState, TrainPosition};
+use super::train_position::TrainPosition;
 use crate::layout::block::BlockData;
 use crate::layout::marker::MarkerData;
 use crate::layout::train::Train;
@@ -66,8 +66,18 @@ pub enum MarkerRole {
 }
 
 impl RouteLeg {
-    /// Returns the logical block ID of the target block, combining block ID,
-    /// direction, and the leg's facing. Useful for persisting train position.
+    /// The logical block this leg starts from. Equals the train's position
+    /// block while this leg is the front leg.
+    pub fn start_logical_block_id(&self) -> LogicalBlockID {
+        LogicalBlockID {
+            block: self.start_block.block_id,
+            direction: self.start_block.direction,
+            facing: self.facing,
+        }
+    }
+
+    /// The logical block this leg ends in. Becomes the train's position block
+    /// when the leg completes.
     pub fn target_logical_block_id(&self) -> LogicalBlockID {
         LogicalBlockID {
             block: self.target_block.block_id,
@@ -91,25 +101,6 @@ impl RouteLeg {
             .iter()
             .map(|slice| Self::build(slice, &enter_marker_map, block_data_map, marker_data_map))
             .collect()
-    }
-
-    /// Build an idle leg for a train sitting in a block.
-    /// Uses the regular `build` path with a single-element slice (the block's enter logical track).
-    /// Since first == last, start and target resolve to the same block.
-    pub fn idle(
-        logical_block: LogicalBlockID,
-        block_data_map: &HashMap<BlockID, BlockData>,
-        marker_data_map: &HashMap<TrackID, MarkerData>,
-    ) -> Option<RouteLeg> {
-        let data = block_data_map.get(&logical_block.block)?;
-        let enter_track = data.enter_logical_track(logical_block.direction, logical_block.facing);
-        let enter_marker_map = build_enter_marker_map(block_data_map);
-        Self::build(
-            &[enter_track],
-            &enter_marker_map,
-            block_data_map,
-            marker_data_map,
-        )
     }
 
     /// Build a single leg from a path slice (enter marker to enter marker).
@@ -182,8 +173,10 @@ pub struct LegOf(pub Entity);
 pub struct TrainLegs(Vec<Entity>);
 
 /// State event: append pre-built route legs to a train's leg queue.
-/// The first new leg's start block must match the last existing leg's target block
-/// (if the train already has legs). Legs are spawned in traversal order.
+/// The train must be placed. The first new leg must start at the last queued
+/// leg's target block, or at the train's position block when the queue is
+/// empty; consecutive legs must chain the same way. Legs are spawned in
+/// traversal order.
 /// Uses TrainID (domain ID) — resolved to Entity via Registry at application time.
 #[derive(Message, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AppendLegs {
@@ -214,8 +207,8 @@ impl Plugin for RouteStatePlugin {
 }
 
 /// Mutation system for AppendLegs state events. Resolves TrainID → Entity via registry,
-/// validates leg continuity, spawns leg entities with train relationships,
-/// and creates TrainPosition on first-time placement.
+/// validates leg continuity against the queue (or the position block when the
+/// queue is empty), and spawns leg entities with train relationships.
 fn handle_append_legs(
     mut commands: Commands,
     mut messages: MessageReader<AppendLegs>,
@@ -233,41 +226,36 @@ fn handle_append_legs(
             .get(&msg.train)
             .expect("AppendLegs: train not found in registry");
 
-        // Check compatibility with last existing leg
-        if let Ok(existing_legs) = train_legs_query.get(train_entity) {
-            if let Some(last_leg_entity) = existing_legs.iter().last() {
-                if let Ok(last_leg) = leg_query.get(last_leg_entity) {
-                    let first_new = &msg.legs[0];
-                    assert_eq!(
-                        last_leg.target_block.block_id, first_new.start_block.block_id,
-                        "New legs must start where existing legs end: \
-                         last target {:?} != first start {:?}",
-                        last_leg.target_block.block_id, first_new.start_block.block_id,
-                    );
-                }
-            }
-        }
+        let position = train_position_query
+            .get(train_entity)
+            .expect("AppendLegs: train is not placed (no TrainPosition)");
 
-        let mut spawned_entities = Vec::with_capacity(msg.legs.len());
+        // The new legs continue from the last queued leg, or from the position block.
+        let last_queued_target = train_legs_query
+            .get(train_entity)
+            .ok()
+            .and_then(|legs| legs.iter().last())
+            .and_then(|entity| leg_query.get(entity).ok())
+            .map(RouteLeg::target_logical_block_id);
+        let mut expected_start = last_queued_target.unwrap_or(position.block);
+
         for leg in &msg.legs {
-            let id = commands
-                .spawn((
-                    leg.clone(),
-                    LegOf(train_entity),
-                    LifeCycleTiedTo(train_entity),
-                    Locked,
-                ))
-                .id();
-            spawned_entities.push(id);
+            assert_eq!(
+                leg.start_logical_block_id(),
+                expected_start,
+                "AppendLegs: leg for train {:?} must start where the queue ends",
+                msg.train,
+            );
+            expected_start = leg.target_logical_block_id();
         }
 
-        // Create TrainPosition on first-time placement
-        if train_position_query.get(train_entity).is_err() {
-            let first_leg = &msg.legs[0];
-            commands.entity(train_entity).insert(TrainPosition {
-                leg_state: TrainLegState::from_marker_role(first_leg.markers[0].role),
-                marker_index: 0,
-            });
+        for leg in &msg.legs {
+            commands.spawn((
+                leg.clone(),
+                LegOf(train_entity),
+                LifeCycleTiedTo(train_entity),
+                Locked,
+            ));
         }
     }
 }

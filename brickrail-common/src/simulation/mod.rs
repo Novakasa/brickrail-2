@@ -29,7 +29,7 @@ use crate::primitives::{BlockID, LogicalBlockID, TrackID, TrainID};
 use driver::{DriverLeg, DriverMarkerHit, QueueDriverLeg};
 use event::SimulationEvent;
 use route::{AppendLegs, LegOf, Locked, RouteLeg, TrainLegs};
-use train_position::{AdvanceLeg, TrainLegState, TrainMarkerHit, TrainPosition};
+use train_position::{CompleteLeg, PlaceTrain, TrainMarkerHit, TrainPosition};
 use virtual_driver::VirtualDriver;
 
 /// System sets for ordering simulation systems within `Update`.
@@ -38,7 +38,7 @@ use virtual_driver::VirtualDriver;
 pub enum SimulationSet {
     /// Systems that mutate state in response to messages (e.g. handle_train_marker_hit).
     StateMutation,
-    /// Systems that read state and emit new messages (e.g. advance_leg_logic).
+    /// Systems that read state and emit new messages (e.g. complete_leg_logic).
     Logic,
 }
 
@@ -57,7 +57,6 @@ impl Plugin for SimulationStatePlugin {
             SimulationSet::Logic.after(SimulationSet::StateMutation),
         );
         app.add_message::<SimulationEvent>();
-        app.add_message::<PlaceTrainAtBlock>();
         app.add_systems(
             Update,
             fan_out_simulation_events
@@ -73,24 +72,24 @@ impl Plugin for SimulationStatePlugin {
 /// message types for the modular handlers to consume.
 fn fan_out_simulation_events(
     mut event_reader: MessageReader<SimulationEvent>,
+    mut place_writer: MessageWriter<PlaceTrain>,
     mut append_writer: MessageWriter<AppendLegs>,
     mut marker_hit_writer: MessageWriter<TrainMarkerHit>,
-    mut advance_writer: MessageWriter<AdvanceLeg>,
-    mut place_writer: MessageWriter<PlaceTrainAtBlock>,
+    mut complete_writer: MessageWriter<CompleteLeg>,
 ) {
     for event in event_reader.read() {
         match event {
+            SimulationEvent::PlaceTrain(e) => {
+                place_writer.write(e.clone());
+            }
             SimulationEvent::AppendLegs(e) => {
                 append_writer.write(e.clone());
             }
             SimulationEvent::TrainMarkerHit(e) => {
                 marker_hit_writer.write(e.clone());
             }
-            SimulationEvent::AdvanceLeg(e) => {
-                advance_writer.write(e.clone());
-            }
-            SimulationEvent::PlaceTrainAtBlock(e) => {
-                place_writer.write(e.clone());
+            SimulationEvent::CompleteLeg(e) => {
+                complete_writer.write(e.clone());
             }
         }
     }
@@ -118,15 +117,6 @@ pub struct PendingEnterData {
     pub awaiting_placement: Vec<TrainID>,
 }
 
-/// Message: place a train at a block by creating an idle leg.
-/// Not a SimulationCommand — used internally by state-driven systems
-/// and can be sent directly (e.g. from editor).
-#[derive(Message, Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct PlaceTrainAtBlock {
-    pub train: TrainID,
-    pub block: LogicalBlockID,
-}
-
 /// Top-level simulation plugin bundling all communication-agnostic domain logic.
 /// Does NOT include transport or command handling — those are added separately
 /// by the transport layer (e.g. `SubAppClientPlugin`).
@@ -141,15 +131,11 @@ impl Plugin for SimulationPlugin {
         app.add_owned(SimulationLogicPlugin);
         app.add_plugins(bevy::time::TimePlugin);
         app.add_owned(virtual_driver::VirtualDriverPlugin);
-        // PlaceTrainAtBlock message is registered by SimulationStatePlugin (via LayoutAppPlugin).
         app.add_systems(OnEnter(SimulationState::Entering), spawn_layout_on_enter);
         app.add_systems(
             Update,
-            (
-                transition_to_running.run_if(in_state(SimulationState::Entering)),
-                handle_place_train_at_block.run_if(on_message::<PlaceTrainAtBlock>),
-            )
-                .chain()
+            transition_to_running
+                .run_if(in_state(SimulationState::Entering))
                 .in_set(SimulationSet::StateMutation),
         );
     }
@@ -157,7 +143,7 @@ impl Plugin for SimulationPlugin {
 
 /// Simulation logic plugin. Server-side only.
 /// Contains logic systems that react to state and emit `SimulationEvent` messages:
-/// leg advancement, driver dispatch, and driver↔simulation translation.
+/// leg completion, driver dispatch, and driver↔simulation translation.
 /// Requires `SimulationStatePlugin`.
 pub struct SimulationLogicPlugin;
 
@@ -169,7 +155,7 @@ impl Plugin for SimulationLogicPlugin {
         app.add_systems(
             Update,
             (
-                advance_leg_logic,
+                complete_leg_logic,
                 translate_driver_marker_hit.run_if(on_message::<DriverMarkerHit>),
             )
                 .in_set(SimulationSet::Logic),
@@ -177,15 +163,22 @@ impl Plugin for SimulationLogicPlugin {
     }
 }
 
-/// Simulation logic: when a train has fully entered its target block and has
-/// a next leg queued, advance to that next leg.
-fn advance_leg_logic(
+/// Simulation logic: when a train has passed its front leg's Entered marker,
+/// the leg is complete.
+fn complete_leg_logic(
     query: Query<(&TrainPosition, &TrainLegs, &ElementId<Train>)>,
+    leg_query: Query<&RouteLeg>,
     mut event_writer: MessageWriter<SimulationEvent>,
 ) {
     for (position, legs, element_id) in &query {
-        if position.leg_state == TrainLegState::EnteredTarget && legs.collection().len() > 1 {
-            event_writer.write(SimulationEvent::AdvanceLeg(AdvanceLeg::new(element_id.0)));
+        let Some(&front_leg_entity) = legs.collection().first() else {
+            continue;
+        };
+        let Ok(front_leg) = leg_query.get(front_leg_entity) else {
+            continue;
+        };
+        if position.has_completed(front_leg) {
+            event_writer.write(SimulationEvent::CompleteLeg(CompleteLeg::new(element_id.0)));
         }
     }
 }
@@ -276,9 +269,9 @@ pub fn handle_enter_control_mode(
 }
 
 /// OnEnter(Entering): spawn layout elements, VirtualDrivers, and emit
-/// PlaceTrainAtBlock messages for cached train positions.
+/// PlaceTrain events for cached train positions.
 /// Registries are populated immediately via observer, so placement
-/// messages can be processed in the same Update tick.
+/// events can be processed in the same Update tick.
 fn spawn_layout_on_enter(
     mut pending: ResMut<PendingEnterData>,
     mut commands: Commands,
@@ -309,14 +302,11 @@ fn spawn_layout_on_enter(
         ));
     }
 
-    // Emit PlaceTrainAtBlock for cached positions.
+    // Emit PlaceTrain for cached positions.
     let positions: Vec<_> = pending.train_positions.drain(..).collect();
     for (train, block) in &positions {
         pending.awaiting_placement.push(*train);
-        event_writer.write(SimulationEvent::PlaceTrainAtBlock(PlaceTrainAtBlock {
-            train: *train,
-            block: *block,
-        }));
+        event_writer.write(SimulationEvent::PlaceTrain(PlaceTrain::new(*train, *block)));
     }
 }
 
@@ -341,30 +331,8 @@ fn transition_to_running(
     }
 }
 
-/// Message handler: place a train at a block by creating an idle leg.
-fn handle_place_train_at_block(
-    mut messages: MessageReader<PlaceTrainAtBlock>,
-    block_registry: Res<Registry<Block>>,
-    block_data_query: Query<&ElementData<Block>>,
-    marker_registry: Res<Registry<Marker>>,
-    marker_data_query: Query<&ElementData<Marker>>,
-    mut event_writer: MessageWriter<SimulationEvent>,
-) {
-    let block_data_map = build_block_data_map(&block_registry, &block_data_query);
-    let marker_data_map = build_marker_data_map(&marker_registry, &marker_data_query);
-
-    for msg in messages.read() {
-        if let Some(idle_leg) = RouteLeg::idle(msg.block, &block_data_map, &marker_data_map) {
-            event_writer.write(SimulationEvent::AppendLegs(AppendLegs::new(
-                msg.train,
-                vec![idle_leg],
-            )));
-        }
-    }
-}
-
-/// Command handler: send a train from its current block to a target block.
-/// Pathfinds, builds route legs + trailing idle, and appends them.
+/// Command handler: send a train from its plan root to a target block.
+/// Pathfinds, builds route legs, and appends them.
 pub fn handle_send_train_to_block(
     mut messages: MessageReader<CommandEnvelope<SendTrainToBlockRequest>>,
     logical_graph: Res<LogicalGraph>,
@@ -373,7 +341,7 @@ pub fn handle_send_train_to_block(
     marker_registry: Res<Registry<Marker>>,
     marker_data_query: Query<&ElementData<Marker>>,
     train_registry: Res<Registry<Train>>,
-    train_query: Query<(&TrainPosition, &TrainLegs)>,
+    train_query: Query<(&TrainPosition, Option<&TrainLegs>)>,
     leg_query: Query<&RouteLeg>,
     mut event_writer: MessageWriter<SimulationEvent>,
     mut response_writer: MessageWriter<CommandResponse>,
@@ -389,20 +357,15 @@ pub fn handle_send_train_to_block(
                 .get(&req.train)
                 .ok_or_else(|| format!("train {:?} not found", req.train))?;
 
-            // Get train's current block from its current leg.
-            let (_, legs) = train_query
+            // Plan root: the last queued leg's target, or the position block.
+            let (position, legs) = train_query
                 .get(train_entity)
-                .map_err(|_| "train has no position/legs".to_string())?;
-            let current_leg_entity = *legs
-                .collection()
-                .first()
-                .ok_or("train has no current leg")?;
-            let current_leg = leg_query
-                .get(current_leg_entity)
-                .map_err(|_| "current leg entity missing")?;
-
-            // Determine start block from current leg's target block.
-            let start = current_leg.target_logical_block_id();
+                .map_err(|_| "train is not placed".to_string())?;
+            let start = legs
+                .and_then(|legs| legs.collection().last().copied())
+                .and_then(|entity| leg_query.get(entity).ok())
+                .map(RouteLeg::target_logical_block_id)
+                .unwrap_or(position.block);
 
             // Pathfind from start to target.
             let start_data = block_data_map
@@ -424,14 +387,8 @@ pub fn handle_send_train_to_block(
             )
             .ok_or("no path found")?;
 
-            let mut route_legs =
-                RouteLeg::build_from_path(&path, &block_data_map, &marker_data_map)
-                    .ok_or("failed to build route legs")?;
-
-            // Add trailing idle at target.
-            let trailing_idle = RouteLeg::idle(req.target_block, &block_data_map, &marker_data_map)
-                .ok_or("failed to build trailing idle")?;
-            route_legs.push(trailing_idle);
+            let route_legs = RouteLeg::build_from_path(&path, &block_data_map, &marker_data_map)
+                .ok_or("failed to build route legs")?;
 
             event_writer.write(SimulationEvent::AppendLegs(AppendLegs::new(
                 req.train, route_legs,

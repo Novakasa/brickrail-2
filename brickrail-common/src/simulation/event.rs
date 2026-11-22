@@ -1,18 +1,17 @@
 use bevy::prelude::*;
 
-use super::PlaceTrainAtBlock;
 use super::route::AppendLegs;
-use super::train_position::{AdvanceLeg, TrainMarkerHit};
+use super::train_position::{CompleteLeg, PlaceTrain, TrainMarkerHit};
 
 /// Canonical simulation event message. Wraps all mutation event types into a single
 /// serializable enum. Logic systems write these; the fan-out system in
 /// `SimulationStatePlugin` dispatches them to individual message handlers.
 #[derive(Message, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SimulationEvent {
+    PlaceTrain(PlaceTrain),
     AppendLegs(AppendLegs),
     TrainMarkerHit(TrainMarkerHit),
-    AdvanceLeg(AdvanceLeg),
-    PlaceTrainAtBlock(PlaceTrainAtBlock),
+    CompleteLeg(CompleteLeg),
 }
 
 /// Extraction resource: collects `SimulationEvent`s produced by logic systems

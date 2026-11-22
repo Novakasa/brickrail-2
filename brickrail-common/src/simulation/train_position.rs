@@ -7,11 +7,12 @@ use crate::lifecycle::Registry;
 use crate::primitives::*;
 use bevy::ecs::relationship::RelationshipTarget;
 
-/// The train's state within its current leg.
-/// Variants explicitly name which block (start or target) they reference.
+/// The train's state within its front leg, derived from the marker index and
+/// the roles of the leg's markers. Variants explicitly name which block
+/// (start or target) they reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TrainLegState {
-    /// Train has fully entered the target block (or is idle in a block).
+    /// Train has fully entered the target block.
     EnteredTarget,
     /// Train is exiting the start block.
     ExitingStart,
@@ -36,22 +37,61 @@ impl TrainLegState {
     }
 }
 
-/// Simulation state: where the train currently is within its leg sequence.
-/// The current leg is always the first entry in `TrainLegs`.
-/// Inserted by `handle_append_legs` when a train receives its first legs.
-#[derive(Component, Clone, Debug)]
+/// Simulation state: where a train is on the layout.
+///
+/// `block` is the logical block the train last fully entered. It is set by
+/// `PlaceTrain` and updated to the completed leg's target on every
+/// `CompleteLeg`. It is always the start block of the front leg in `TrainLegs`.
+///
+/// `marker_index` is the index of the last marker the train's sensor passed
+/// within the front leg. It is zero whenever a leg becomes the front leg,
+/// since a leg's first marker is the position block's enter marker, which the
+/// train has already passed. With an empty queue it is zero.
+///
+/// A train with an empty leg queue is standing still in `block`; a train with
+/// a non-empty queue is executing the front leg.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub struct TrainPosition {
-    /// The train's state within the current leg.
-    pub leg_state: TrainLegState,
-    /// Index of the last marker the train passed within the current leg.
-    /// Starts at 0 (the first marker, which is the enter/exiting marker — already passed).
-    /// Incremented by each TrainMarkerHit.
+    pub block: LogicalBlockID,
     pub marker_index: usize,
 }
 
-/// State event: a train hit a marker. Increments marker_index and updates leg_state
-/// based on the role of the next marker in the current leg.
-/// No leg advancement — that's handled by `AdvanceLeg`.
+impl TrainPosition {
+    /// A train standing still in `block`.
+    pub fn at(block: LogicalBlockID) -> Self {
+        Self {
+            block,
+            marker_index: 0,
+        }
+    }
+
+    /// The train's state within `front_leg`, derived from the marker index.
+    pub fn leg_state(&self, front_leg: &RouteLeg) -> TrainLegState {
+        TrainLegState::from_marker_role(front_leg.markers[self.marker_index].role)
+    }
+
+    /// Whether the train has passed `front_leg`'s Entered marker.
+    pub fn has_completed(&self, front_leg: &RouteLeg) -> bool {
+        self.marker_index + 1 == front_leg.markers.len()
+    }
+}
+
+/// State event: place a train on the layout, standing in `block`.
+/// The train's leg queue must be empty. Inserts (or overwrites) `TrainPosition`.
+#[derive(Message, Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PlaceTrain {
+    pub train: TrainID,
+    pub block: LogicalBlockID,
+}
+
+impl PlaceTrain {
+    pub fn new(train: TrainID, block: LogicalBlockID) -> Self {
+        Self { train, block }
+    }
+}
+
+/// State event: the train passed the next marker of its front leg.
+/// Increments `marker_index`.
 #[derive(Message, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TrainMarkerHit {
     pub train: TrainID,
@@ -63,43 +103,70 @@ impl TrainMarkerHit {
     }
 }
 
-/// State event: advance to the next leg in the queue.
-/// Emitted by the logic layer when the train is ready to proceed.
-/// Panics if no next leg exists — the strategy layer must always append
-/// a trailing idle leg when building a route.
-/// Despawns the old leg and resets marker_index to 0.
+/// State event: the front leg is complete. Removes it from the queue, sets
+/// the position block to its target, and resets `marker_index` to zero.
+/// Emitted by the logic layer once the train has passed the Entered marker.
 #[derive(Message, Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct AdvanceLeg {
+pub struct CompleteLeg {
     pub train: TrainID,
 }
 
-impl AdvanceLeg {
+impl CompleteLeg {
     pub fn new(train: TrainID) -> Self {
         Self { train }
     }
 }
 
 /// Train position simulation state sub-plugin.
-/// Registers TrainMarkerHit and AdvanceLeg state events.
-/// TrainPosition creation is handled by AppendLegs in route.rs.
+/// Registers the `PlaceTrain`, `TrainMarkerHit` and `CompleteLeg` state events.
 pub struct TrainPositionStatePlugin;
 
 impl Plugin for TrainPositionStatePlugin {
     fn build(&self, app: &mut App) {
+        app.add_message::<PlaceTrain>();
         app.add_message::<TrainMarkerHit>();
-        app.add_message::<AdvanceLeg>();
+        app.add_message::<CompleteLeg>();
         app.add_systems(
             Update,
             (
+                handle_place_train.run_if(on_message::<PlaceTrain>),
                 handle_train_marker_hit.run_if(on_message::<TrainMarkerHit>),
-                handle_advance_leg.run_if(on_message::<AdvanceLeg>),
+                handle_complete_leg.run_if(on_message::<CompleteLeg>),
             )
                 .in_set(SimulationSet::StateMutation),
         );
     }
 }
 
-/// Mutation system for TrainMarkerHit. Increments marker_index and updates leg_state.
+/// Mutation system for PlaceTrain. Sets the train's position to standing in the block.
+fn handle_place_train(
+    mut commands: Commands,
+    mut messages: MessageReader<PlaceTrain>,
+    train_registry: Res<Registry<Train>>,
+    train_legs_query: Query<&TrainLegs>,
+) {
+    for msg in messages.read() {
+        let train_entity = train_registry
+            .get(&msg.train)
+            .expect("PlaceTrain: train not found in registry");
+
+        let queue_len = train_legs_query
+            .get(train_entity)
+            .map(|legs| legs.collection().len())
+            .unwrap_or(0);
+        assert_eq!(
+            queue_len, 0,
+            "PlaceTrain: train {:?} has {} queued legs; placement requires an empty queue",
+            msg.train, queue_len
+        );
+
+        commands
+            .entity(train_entity)
+            .insert(TrainPosition::at(msg.block));
+    }
+}
+
+/// Mutation system for TrainMarkerHit. Increments marker_index within the front leg.
 fn handle_train_marker_hit(
     mut messages: MessageReader<TrainMarkerHit>,
     train_registry: Res<Registry<Train>>,
@@ -116,29 +183,29 @@ fn handle_train_marker_hit(
             .get_mut(train_entity)
             .expect("TrainMarkerHit: train has no TrainPosition");
 
-        position.marker_index += 1;
-
-        let legs = train_legs_query
+        let front_leg_entity = train_legs_query
             .get(train_entity)
-            .expect("TrainMarkerHit: train has no TrainLegs");
-        let current_leg_entity = *legs
-            .collection()
-            .first()
-            .expect("TrainMarkerHit: train has no legs");
-        let leg = leg_query
-            .get(current_leg_entity)
-            .expect("TrainMarkerHit: current leg entity not found");
+            .ok()
+            .and_then(|legs| legs.collection().first().copied())
+            .expect("TrainMarkerHit: train has an empty leg queue");
+        let front_leg = leg_query
+            .get(front_leg_entity)
+            .expect("TrainMarkerHit: front leg entity not found");
 
-        let marker = &leg.markers[position.marker_index];
-        position.leg_state = TrainLegState::from_marker_role(marker.role);
+        assert!(
+            position.marker_index + 1 < front_leg.markers.len(),
+            "TrainMarkerHit: train {:?} is already past the last marker of its front leg",
+            msg.train
+        );
+        position.marker_index += 1;
     }
 }
 
-/// Mutation system for AdvanceLeg. Despawns the current (first) leg, making the next leg current.
-/// Resets marker_index and sets leg_state from the new current leg's first marker.
-fn handle_advance_leg(
+/// Mutation system for CompleteLeg. Despawns the front leg, moves the position
+/// block to its target, and resets marker_index.
+fn handle_complete_leg(
     mut commands: Commands,
-    mut messages: MessageReader<AdvanceLeg>,
+    mut messages: MessageReader<CompleteLeg>,
     train_registry: Res<Registry<Train>>,
     mut train_position_query: Query<&mut TrainPosition>,
     train_legs_query: Query<&TrainLegs>,
@@ -147,32 +214,24 @@ fn handle_advance_leg(
     for msg in messages.read() {
         let train_entity = train_registry
             .get(&msg.train)
-            .expect("AdvanceLeg: train not found in registry");
+            .expect("CompleteLeg: train not found in registry");
 
         let mut position = train_position_query
             .get_mut(train_entity)
-            .expect("AdvanceLeg: train has no TrainPosition");
+            .expect("CompleteLeg: train has no TrainPosition");
 
-        let legs = train_legs_query
+        let front_leg_entity = train_legs_query
             .get(train_entity)
-            .expect("AdvanceLeg: train has no TrainLegs");
+            .ok()
+            .and_then(|legs| legs.collection().first().copied())
+            .expect("CompleteLeg: train has an empty leg queue");
+        let front_leg = leg_query
+            .get(front_leg_entity)
+            .expect("CompleteLeg: front leg entity not found");
 
-        let current_leg_entity = *legs
-            .collection()
-            .first()
-            .expect("AdvanceLeg: train has no legs");
-        let next_leg_entity = *legs
-            .collection()
-            .get(1)
-            .expect("AdvanceLeg: no next leg — strategy layer must append trailing idle leg");
-
-        let next_leg = leg_query
-            .get(next_leg_entity)
-            .expect("AdvanceLeg: next leg entity not found");
-
-        position.leg_state = TrainLegState::from_marker_role(next_leg.markers[0].role);
+        position.block = front_leg.target_logical_block_id();
         position.marker_index = 0;
 
-        commands.entity(current_leg_entity).despawn();
+        commands.entity(front_leg_entity).despawn();
     }
 }

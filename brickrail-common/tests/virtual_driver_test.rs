@@ -12,7 +12,7 @@ use brickrail_common::lifecycle::*;
 use brickrail_common::primitives::*;
 use brickrail_common::simulation::SimulationLogicPlugin;
 use brickrail_common::simulation::route::{AppendLegs, RouteLeg, TrainLegs};
-use brickrail_common::simulation::train_position::{TrainLegState, TrainPosition};
+use brickrail_common::simulation::train_position::{PlaceTrain, TrainPosition};
 use brickrail_common::simulation::virtual_driver::{VirtualDriver, VirtualDriverPlugin};
 use petgraph::algo::astar;
 
@@ -113,125 +113,54 @@ fn build_route(
     RouteLeg::build_from_path(&path, block_data_map, marker_data_map)
 }
 
-/// End-to-end test: virtual driver advances a train from block A to block B.
-/// Uses a very high speed so markers are crossed within a single tick.
-#[test]
-fn virtual_driver_advances_through_route() {
-    let mut app = make_app();
-    spawn_two_block_layout(&mut app);
-
-    let t0 = TrackID::new(CellID::new(0, 0, 0), Orientation::EW);
-    let t1 = TrackID::new(CellID::new(1, 0, 0), Orientation::EW);
-    let t3 = TrackID::new(CellID::new(3, 0, 0), Orientation::EW);
-    let t4 = TrackID::new(CellID::new(4, 0, 0), Orientation::EW);
-    let block_a = BlockID::new(t0, t1);
-    let block_b = BlockID::new(t3, t4);
-
-    let block_data_map = extract_block_data_map(&app);
-    let marker_data_map = extract_marker_data_map(&app);
-    let logical_graph = app.world().resource::<LogicalGraph>();
-
-    let logical_a = LogicalBlockID {
-        block: block_a,
+fn logical(block: BlockID) -> LogicalBlockID {
+    LogicalBlockID {
+        block,
         direction: BlockDirection::Aligned,
         facing: Facing::Forward,
-    };
-    let logical_b = LogicalBlockID {
-        block: block_b,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-
-    // Build idle leg at A, route A→B, trailing idle at B
-    let idle = RouteLeg::idle(logical_a, &block_data_map, &marker_data_map).unwrap();
-    let mut route_legs = build_route(
-        logical_a,
-        logical_b,
-        logical_graph,
-        &block_data_map,
-        &marker_data_map,
-    )
-    .unwrap();
-    route_legs.push(RouteLeg::idle(logical_b, &block_data_map, &marker_data_map).unwrap());
-
-    // Spawn VirtualDriver as a separate entity
-    app.world_mut()
-        .spawn(VirtualDriver::new(TrainID(0), 1_000_000.0));
-
-    // Place train with idle leg
-    app.world_mut()
-        .write_message(AppendLegs::new(TrainID(0), vec![idle]));
-    app.update();
-
-    // Train should be idle at block A
-    let train_entity = app
-        .world()
-        .resource::<Registry<Train>>()
-        .get(&TrainID(0))
-        .unwrap();
-    let position = app.world().get::<TrainPosition>(train_entity).unwrap();
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
-
-    // Append route + trailing idle
-    app.world_mut()
-        .write_message(AppendLegs::new(TrainID(0), route_legs));
-    app.update();
-
-    // Run enough updates for the full pipeline:
-    // AppendLegs → dispatch → QueueDriverLeg → driver ticks → DriverMarkerHit → TrainMarkerHit → AdvanceLeg
-    for _ in 0..20 {
-        app.update();
     }
-
-    // Train should have arrived at block B (trailing idle)
-    let position = app.world().get::<TrainPosition>(train_entity).unwrap();
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
-    assert_eq!(position.marker_index, 0);
-
-    // Current leg should be the trailing idle at block B
-    let legs = app.world().get::<TrainLegs>(train_entity).unwrap();
-    assert_eq!(
-        legs.collection().len(),
-        1,
-        "only trailing idle should remain"
-    );
-    let current_leg_entity = *legs.collection().first().unwrap();
-    let current_leg = app.world().get::<RouteLeg>(current_leg_entity).unwrap();
-    assert_eq!(current_leg.start_block.block_id, block_b);
-    assert_eq!(current_leg.target_block.block_id, block_b);
 }
 
-/// Test that the virtual driver stops when no next leg is queued.
-#[test]
-fn virtual_driver_stops_without_next_leg() {
-    let mut app = make_app();
-    spawn_two_block_layout(&mut app);
-
+fn two_block_ids() -> (BlockID, BlockID) {
     let t0 = TrackID::new(CellID::new(0, 0, 0), Orientation::EW);
     let t1 = TrackID::new(CellID::new(1, 0, 0), Orientation::EW);
     let t3 = TrackID::new(CellID::new(3, 0, 0), Orientation::EW);
     let t4 = TrackID::new(CellID::new(4, 0, 0), Orientation::EW);
-    let block_a = BlockID::new(t0, t1);
-    let block_b = BlockID::new(t3, t4);
+    (BlockID::new(t0, t1), BlockID::new(t3, t4))
+}
 
-    let block_data_map = extract_block_data_map(&app);
-    let marker_data_map = extract_marker_data_map(&app);
+fn train_entity(app: &App) -> Entity {
+    app.world()
+        .resource::<Registry<Train>>()
+        .get(&TrainID(0))
+        .unwrap()
+}
+
+/// Number of legs in the train's queue (zero when the relationship target is absent).
+fn queue_len(app: &App) -> usize {
+    app.world()
+        .get::<TrainLegs>(train_entity(app))
+        .map_or(0, |legs| legs.collection().len())
+}
+
+fn position(app: &App) -> TrainPosition {
+    app.world()
+        .get::<TrainPosition>(train_entity(app))
+        .expect("train should have a TrainPosition")
+        .clone()
+}
+
+/// Spawn the layout and a fast virtual driver, place the train at A, and
+/// return the A → B route.
+fn placed_train_with_route(app: &mut App) -> (LogicalBlockID, LogicalBlockID, Vec<RouteLeg>) {
+    spawn_two_block_layout(app);
+    let (block_a, block_b) = two_block_ids();
+    let (logical_a, logical_b) = (logical(block_a), logical(block_b));
+
+    let block_data_map = extract_block_data_map(app);
+    let marker_data_map = extract_marker_data_map(app);
     let logical_graph = app.world().resource::<LogicalGraph>();
-
-    let logical_a = LogicalBlockID {
-        block: block_a,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-    let logical_b = LogicalBlockID {
-        block: block_b,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-
-    // Build idle + route WITHOUT trailing idle (train should stop at B)
-    let idle = RouteLeg::idle(logical_a, &block_data_map, &marker_data_map).unwrap();
-    let route_legs = build_route(
+    let route = build_route(
         logical_a,
         logical_b,
         logical_graph,
@@ -240,38 +169,59 @@ fn virtual_driver_stops_without_next_leg() {
     )
     .unwrap();
 
-    // Spawn VirtualDriver as a separate entity
+    // Very high speed so markers are crossed within a single tick.
     app.world_mut()
         .spawn(VirtualDriver::new(TrainID(0), 1_000_000.0));
 
-    // Place train and append route (no trailing idle)
     app.world_mut()
-        .write_message(AppendLegs::new(TrainID(0), vec![idle]));
+        .write_message(PlaceTrain::new(TrainID(0), logical_a));
     app.update();
-    app.world_mut()
-        .write_message(AppendLegs::new(TrainID(0), route_legs));
+    assert_eq!(position(app), TrainPosition::at(logical_a));
+    assert_eq!(queue_len(app), 0);
 
+    (logical_a, logical_b, route)
+}
+
+/// End-to-end test: the virtual driver carries a train from block A to block B.
+/// On arrival the route leg is complete, the queue is empty, and the train
+/// stands in B.
+#[test]
+fn virtual_driver_drives_route_to_completion() {
+    let mut app = make_app();
+    let (_, logical_b, route) = placed_train_with_route(&mut app);
+
+    app.world_mut()
+        .write_message(AppendLegs::new(TrainID(0), route));
+
+    // Run enough updates for the full pipeline:
+    // AppendLegs → dispatch → QueueDriverLeg → driver ticks → DriverMarkerHit → TrainMarkerHit → CompleteLeg
     for _ in 0..20 {
         app.update();
     }
 
-    // Train should have completed the route leg and be stuck at EnteredTarget
-    // with no trailing idle to advance to.
-    let train_entity = app
-        .world()
-        .resource::<Registry<Train>>()
-        .get(&TrainID(0))
-        .unwrap();
-    let position = app.world().get::<TrainPosition>(train_entity).unwrap();
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
+    assert_eq!(position(&app), TrainPosition::at(logical_b));
+    assert_eq!(queue_len(&app), 0, "the completed leg leaves the queue");
+}
 
-    // Only the route leg should remain (no advance happened)
-    let legs = app.world().get::<TrainLegs>(train_entity).unwrap();
-    assert_eq!(legs.collection().len(), 1);
-    let current_leg = app
-        .world()
-        .get::<RouteLeg>(*legs.collection().first().unwrap())
-        .unwrap();
-    assert_eq!(current_leg.start_block.block_id, block_a);
-    assert_eq!(current_leg.target_block.block_id, block_b);
+/// With an empty queue the driver stops: further ticks produce no marker hits
+/// and the train keeps standing in its position block.
+#[test]
+fn virtual_driver_stops_with_empty_queue() {
+    let mut app = make_app();
+    let (_, logical_b, route) = placed_train_with_route(&mut app);
+
+    app.world_mut()
+        .write_message(AppendLegs::new(TrainID(0), route));
+    for _ in 0..20 {
+        app.update();
+    }
+    assert_eq!(position(&app), TrainPosition::at(logical_b));
+
+    // A marker hit with an empty queue would panic in the state layer, so
+    // surviving these ticks shows the driver has stopped.
+    for _ in 0..20 {
+        app.update();
+    }
+    assert_eq!(position(&app), TrainPosition::at(logical_b));
+    assert_eq!(queue_len(&app), 0);
 }

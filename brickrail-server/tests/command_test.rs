@@ -9,8 +9,8 @@ use brickrail_common::layout::train::Train;
 use brickrail_common::layout::{Layout, LayoutAppPlugin, LayoutSubApp};
 use brickrail_common::lifecycle::*;
 use brickrail_common::primitives::*;
-use brickrail_common::simulation::route::{RouteLeg, TrainLegs};
-use brickrail_common::simulation::train_position::{TrainLegState, TrainPosition};
+use brickrail_common::simulation::route::TrainLegs;
+use brickrail_common::simulation::train_position::TrainPosition;
 use brickrail_common::simulation::virtual_driver::VirtualDriver;
 
 /// Build a client+simulation app with bidirectional extract bridge.
@@ -169,12 +169,13 @@ fn enter_control_mode_with_train_placement() {
         state
     );
 
-    // Train should have a position in the SubApp.
+    // Train should be standing at block A in the SubApp.
     let sub_world = app.sub_app(LayoutSubApp).world();
     let train_registry = sub_world.resource::<Registry<Train>>();
     let train_entity = train_registry.get(&TrainID(0)).unwrap();
     let position = sub_world.get::<TrainPosition>(train_entity).unwrap();
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
+    assert_eq!(*position, TrainPosition::at(block_a()));
+    assert!(sub_world.get::<TrainLegs>(train_entity).is_none());
 }
 
 #[test]
@@ -219,11 +220,9 @@ fn send_train_to_block() {
     let train_registry = sub_world.resource::<Registry<Train>>();
     let train_entity = train_registry.get(&TrainID(0)).unwrap();
     let legs = sub_world.get::<TrainLegs>(train_entity).unwrap();
-    // Should have: idle (current) + route + trailing idle
     assert!(
-        legs.collection().len() >= 2,
-        "expected at least 2 legs, got {}",
-        legs.collection().len()
+        !legs.collection().is_empty(),
+        "expected the route's legs to be queued"
     );
 }
 
@@ -264,23 +263,16 @@ fn send_train_to_block_end_to_end() {
         app.update();
     }
 
-    // Train should have arrived at block B (trailing idle).
+    // Train should be standing at block B with an empty queue.
     let sub_world = app.sub_app(LayoutSubApp).world();
     let train_registry = sub_world.resource::<Registry<Train>>();
     let train_entity = train_registry.get(&TrainID(0)).unwrap();
     let position = sub_world.get::<TrainPosition>(train_entity).unwrap();
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
-
-    let legs = sub_world.get::<TrainLegs>(train_entity).unwrap();
-    assert_eq!(
-        legs.collection().len(),
-        1,
-        "only trailing idle should remain"
+    assert_eq!(*position, TrainPosition::at(block_b()));
+    assert!(
+        sub_world.get::<TrainLegs>(train_entity).is_none(),
+        "the completed leg should have left the queue"
     );
-    let current_leg = sub_world
-        .get::<RouteLeg>(*legs.collection().first().unwrap())
-        .unwrap();
-    assert_eq!(current_leg.target_block.block_id, block_b().block);
 }
 
 /// Build a full client-level app with AppCommandQueue and main-world state mirror.
@@ -342,7 +334,7 @@ fn exit_and_reenter_preserves_position() {
         let train_registry = sub_world.resource::<Registry<Train>>();
         let train_entity = train_registry.get(&TrainID(0)).unwrap();
         let position = sub_world.get::<TrainPosition>(train_entity).unwrap();
-        assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
+        assert_eq!(*position, TrainPosition::at(block_b()));
     }
 
     // Exit control mode via AppCommand — should extract TrainBlockPosition.
@@ -383,7 +375,7 @@ fn exit_and_reenter_preserves_position() {
         state
     );
 
-    // Run a few more frames for the auto-placed PlaceTrainAtBlock to complete.
+    // Run a few more frames for the auto-placed PlaceTrain to complete.
     for _ in 0..5 {
         app.update();
     }
@@ -393,15 +385,9 @@ fn exit_and_reenter_preserves_position() {
     let train_registry = sub_world.resource::<Registry<Train>>();
     let train_entity = train_registry.get(&TrainID(0)).unwrap();
     let position = sub_world.get::<TrainPosition>(train_entity).unwrap();
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
-
-    let legs = sub_world.get::<TrainLegs>(train_entity).unwrap();
-    let current_leg = sub_world
-        .get::<RouteLeg>(*legs.collection().first().unwrap())
-        .unwrap();
     assert_eq!(
-        current_leg.target_block.block_id,
-        block_b().block,
+        *position,
+        TrainPosition::at(block_b()),
         "train should be at block B after round-trip"
     );
 }

@@ -10,8 +10,7 @@ use crate::layout::track::Track;
 use crate::layout::train::Train;
 use crate::lifecycle::{ElementData, ElementEntry, ElementId, Registry, SpawnLayoutElement};
 use crate::primitives::{LogicalBlockID, TrainID};
-use crate::simulation::route::{RouteLeg, TrainLegs};
-use crate::simulation::train_position::{TrainLegState, TrainPosition};
+use crate::simulation::train_position::TrainPosition;
 
 use super::{
     CommandEnvelope, CommandId, CommandRegistry, CommandResponse, CommandState,
@@ -147,8 +146,7 @@ fn dispatch_app_commands(
     entity_query: Query<(&CommandId, &CommandState, &AppCommand)>,
     mut cmd_queue: ResMut<SubAppCommandInputQueue>,
     mut spawn_layout_writer: MessageWriter<CommandEnvelope<SpawnLayoutRequest>>,
-    train_query: Query<(Entity, &ElementId<Train>, &TrainPosition, &TrainLegs)>,
-    leg_query: Query<&RouteLeg>,
+    train_query: Query<(Entity, &TrainPosition)>,
     cached_position_query: Query<(&ElementId<Train>, &TrainBlockPosition)>,
     train_registry: Res<Registry<Train>>,
     layout_collector: LayoutCollector,
@@ -213,17 +211,11 @@ fn dispatch_app_commands(
             });
         }
         AppCommand::ExitControlMode => {
-            // Extract train positions from main-world mirror before despawn.
-            for (train_entity, _train_id, position, legs) in &train_query {
-                if position.leg_state == TrainLegState::EnteredTarget {
-                    if let Some(&leg_entity) = legs.collection().first() {
-                        if let Ok(leg) = leg_query.get(leg_entity) {
-                            commands
-                                .entity(train_entity)
-                                .insert(TrainBlockPosition(leg.target_logical_block_id()));
-                        }
-                    }
-                }
+            // Cache each train's position block from the main-world mirror before despawn.
+            for (train_entity, position) in &train_query {
+                commands
+                    .entity(train_entity)
+                    .insert(TrainBlockPosition(position.block));
             }
             // Forward ExitControlMode to SubApp.
             cmd_queue.0.push(CommandEnvelope {

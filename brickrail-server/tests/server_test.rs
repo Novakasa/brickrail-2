@@ -15,7 +15,7 @@ use brickrail_common::lifecycle::*;
 use brickrail_common::primitives::*;
 use brickrail_common::simulation::route::{AppendLegs, LegOf, MarkerRole, RouteLeg, TrainLegs};
 use brickrail_common::simulation::train_position::{
-    AdvanceLeg, TrainLegState, TrainMarkerHit, TrainPosition,
+    CompleteLeg, PlaceTrain, TrainLegState, TrainMarkerHit, TrainPosition,
 };
 use brickrail_common::simulation::{SimulationState, SimulationStatePlugin};
 use brickrail_server::ServerPlugin;
@@ -504,7 +504,9 @@ fn append_legs_spawns_leg_entities() {
     )
     .expect("should find a route");
 
-    // Append the legs via state event message
+    // Place the train at the start block, then append the legs via state event message
+    layout_world_mut(&mut app).write_message(PlaceTrain::new(TrainID(0), start));
+    app.update();
     layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), legs));
     app.update();
 
@@ -557,88 +559,68 @@ fn extract_marker_data_map(app: &App) -> HashMap<TrackID, MarkerData> {
 
 // --- Train position tests ---
 
-#[test]
-fn append_idle_creates_position() {
-    let mut app = make_app();
-    enter_control_mode(&mut app, two_block_layout());
-    for _ in 0..5 {
-        app.update();
-    }
-
-    let t0 = TrackID::new(CellID::new(0, 0, 0), Orientation::EW);
-    let t1 = TrackID::new(CellID::new(1, 0, 0), Orientation::EW);
-    let block_a = BlockID::new(t0, t1);
-
-    let block_data_map = extract_block_data_map(&app);
-    let marker_data_map = extract_marker_data_map(&app);
-
-    let logical_block = LogicalBlockID {
-        block: block_a,
+fn logical(block: BlockID) -> LogicalBlockID {
+    LogicalBlockID {
+        block,
         direction: BlockDirection::Aligned,
         facing: Facing::Forward,
-    };
-
-    let idle_leg = RouteLeg::idle(logical_block, &block_data_map, &marker_data_map)
-        .expect("should build idle leg");
-
-    // Idle leg: start == target, no travel, one marker (Entered — always assigned to last marker)
-    assert_eq!(idle_leg.start_block.block_id, block_a);
-    assert_eq!(idle_leg.target_block.block_id, block_a);
-    assert!(idle_leg.travel.is_empty());
-    assert_eq!(idle_leg.markers.len(), 1);
-    assert_eq!(idle_leg.markers[0].role, Some(MarkerRole::Entered));
-
-    // Append the idle leg
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), vec![idle_leg]));
-    app.update();
-
-    // TrainPosition should now exist
-    let world = layout_world(&app);
-    let train_registry = world.resource::<Registry<Train>>();
-    let train_entity = train_registry.get(&TrainID(0)).unwrap();
-    let position = world
-        .get::<TrainPosition>(train_entity)
-        .expect("TrainPosition should exist after first AppendLegs");
-
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
-    assert_eq!(position.marker_index, 0);
+    }
 }
 
-#[test]
-fn advance_off_idle_to_route() {
-    let mut app = make_app();
-    enter_control_mode(&mut app, two_block_layout());
-    for _ in 0..5 {
-        app.update();
-    }
-
+fn two_block_ids() -> (BlockID, BlockID) {
     let t0 = TrackID::new(CellID::new(0, 0, 0), Orientation::EW);
     let t1 = TrackID::new(CellID::new(1, 0, 0), Orientation::EW);
     let t3 = TrackID::new(CellID::new(3, 0, 0), Orientation::EW);
     let t4 = TrackID::new(CellID::new(4, 0, 0), Orientation::EW);
-    let block_a = BlockID::new(t0, t1);
-    let block_b = BlockID::new(t3, t4);
+    (BlockID::new(t0, t1), BlockID::new(t3, t4))
+}
 
-    let block_data_map = extract_block_data_map(&app);
-    let marker_data_map = extract_marker_data_map(&app);
-    let logical_graph = layout_world(&app).resource::<LogicalGraph>();
+fn train_entity(app: &App) -> Entity {
+    layout_world(app)
+        .resource::<Registry<Train>>()
+        .get(&TrainID(0))
+        .unwrap()
+}
 
-    // Build idle leg at block A
-    let logical_a = LogicalBlockID {
-        block: block_a,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-    let idle_leg = RouteLeg::idle(logical_a, &block_data_map, &marker_data_map)
-        .expect("should build idle leg");
+/// Number of legs in the train's queue (zero when the relationship target is absent).
+fn queue_len(app: &App) -> usize {
+    layout_world(app)
+        .get::<TrainLegs>(train_entity(app))
+        .map_or(0, |legs| legs.collection().len())
+}
 
-    // Build route legs A → B + trailing idle at B
-    let logical_b = LogicalBlockID {
-        block: block_b,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-    let route_legs = build_route(
+fn front_leg(app: &App) -> RouteLeg {
+    let world = layout_world(app);
+    let legs = world.get::<TrainLegs>(train_entity(app)).unwrap();
+    world
+        .get::<RouteLeg>(*legs.collection().first().unwrap())
+        .unwrap()
+        .clone()
+}
+
+fn position(app: &App) -> TrainPosition {
+    layout_world(app)
+        .get::<TrainPosition>(train_entity(app))
+        .expect("train should have a TrainPosition")
+        .clone()
+}
+
+/// Enter control mode, place the train at block A, and build the A → B route.
+fn placed_train_with_route(app: &mut App) -> (LogicalBlockID, LogicalBlockID, Vec<RouteLeg>) {
+    enter_control_mode(app, two_block_layout());
+    for _ in 0..5 {
+        app.update();
+    }
+    let (block_a, block_b) = two_block_ids();
+    let (logical_a, logical_b) = (logical(block_a), logical(block_b));
+
+    layout_world_mut(app).write_message(PlaceTrain::new(TrainID(0), logical_a));
+    app.update();
+
+    let block_data_map = extract_block_data_map(app);
+    let marker_data_map = extract_marker_data_map(app);
+    let logical_graph = layout_world(app).resource::<LogicalGraph>();
+    let route = build_route(
         logical_a,
         logical_b,
         logical_graph,
@@ -646,201 +628,99 @@ fn advance_off_idle_to_route() {
         &marker_data_map,
     )
     .expect("should find route");
-    let trailing_idle = RouteLeg::idle(logical_b, &block_data_map, &marker_data_map)
-        .expect("should build trailing idle");
+    (logical_a, logical_b, route)
+}
 
-    // Append idle, then route + trailing idle
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), vec![idle_leg]));
+#[test]
+fn place_train_creates_position() {
+    let mut app = make_app();
+    enter_control_mode(&mut app, two_block_layout());
+    for _ in 0..5 {
+        app.update();
+    }
+    let (block_a, _) = two_block_ids();
+
+    layout_world_mut(&mut app).write_message(PlaceTrain::new(TrainID(0), logical(block_a)));
     app.update();
 
-    let mut route_with_trailing = route_legs;
-    route_with_trailing.push(trailing_idle);
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), route_with_trailing));
+    assert_eq!(position(&app), TrainPosition::at(logical(block_a)));
+    assert_eq!(queue_len(&app), 0, "a placed train has an empty queue");
+}
+
+#[test]
+fn append_legs_continues_from_position_block() {
+    let mut app = make_app();
+    let (logical_a, logical_b, route) = placed_train_with_route(&mut app);
+
+    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), route));
     app.update();
 
-    // Advance off idle
-    layout_world_mut(&mut app).write_message(AdvanceLeg::new(TrainID(0)));
+    // Appending leaves the position untouched; the route becomes the front leg.
+    assert_eq!(position(&app), TrainPosition::at(logical_a));
+    assert_eq!(queue_len(&app), 1);
+    let leg = front_leg(&app);
+    assert_eq!(leg.start_logical_block_id(), logical_a);
+    assert_eq!(leg.target_logical_block_id(), logical_b);
+}
+
+#[test]
+#[should_panic(expected = "must start where the queue ends")]
+fn append_legs_rejects_leg_not_starting_at_position_block() {
+    let mut app = make_app();
+    let (_, logical_b, route) = placed_train_with_route(&mut app);
+
+    // Re-place the train at B, then try to append a route that starts at A.
+    layout_world_mut(&mut app).write_message(PlaceTrain::new(TrainID(0), logical_b));
     app.update();
-
-    // TrainPosition should point to the route leg, not idle
-    let world = layout_world(&app);
-    let train_registry = world.resource::<Registry<Train>>();
-    let train_entity = train_registry.get(&TrainID(0)).unwrap();
-    let position = world.get::<TrainPosition>(train_entity).unwrap();
-
-    assert_eq!(position.leg_state, TrainLegState::ExitingStart);
-    assert_eq!(position.marker_index, 0);
-
-    // The current leg (first in TrainLegs) should be the route leg (A → B)
-    let legs = world.get::<TrainLegs>(train_entity).unwrap();
-    let current_leg_entity = *legs.collection().first().unwrap();
-    let current_leg = world.get::<RouteLeg>(current_leg_entity).unwrap();
-    assert_eq!(current_leg.start_block.block_id, block_a);
-    assert_eq!(current_leg.target_block.block_id, block_b);
-
-    // Should have 3 legs total now (idle despawned, route + trailing idle remain)
-    let sub_app = app.sub_app_mut(LayoutSubApp);
-    let legs_count = sub_app
-        .world_mut()
-        .query::<&RouteLeg>()
-        .iter(sub_app.world())
-        .count();
-    assert_eq!(legs_count, 2); // route leg + trailing idle
+    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), route));
+    app.update();
 }
 
 #[test]
 fn marker_hit_increments_and_updates_state() {
     let mut app = make_app();
-    enter_control_mode(&mut app, two_block_layout());
-    for _ in 0..5 {
-        app.update();
-    }
-
-    let t0 = TrackID::new(CellID::new(0, 0, 0), Orientation::EW);
-    let t1 = TrackID::new(CellID::new(1, 0, 0), Orientation::EW);
-    let t3 = TrackID::new(CellID::new(3, 0, 0), Orientation::EW);
-    let t4 = TrackID::new(CellID::new(4, 0, 0), Orientation::EW);
-    let block_a = BlockID::new(t0, t1);
-    let block_b = BlockID::new(t3, t4);
-
-    let block_data_map = extract_block_data_map(&app);
-    let marker_data_map = extract_marker_data_map(&app);
-    let logical_graph = layout_world(&app).resource::<LogicalGraph>();
-
-    let logical_a = LogicalBlockID {
-        block: block_a,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-    let logical_b = LogicalBlockID {
-        block: block_b,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-
-    // Place train with idle, append route + trailing idle, advance off idle
-    let idle = RouteLeg::idle(logical_a, &block_data_map, &marker_data_map).unwrap();
-    let mut legs = build_route(
-        logical_a,
-        logical_b,
-        logical_graph,
-        &block_data_map,
-        &marker_data_map,
-    )
-    .unwrap();
-    legs.push(RouteLeg::idle(logical_b, &block_data_map, &marker_data_map).unwrap());
-
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), vec![idle]));
-    app.update();
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), legs));
-    app.update();
-    layout_world_mut(&mut app).write_message(AdvanceLeg::new(TrainID(0)));
+    let (_, _, route) = placed_train_with_route(&mut app);
+    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), route));
     app.update();
 
-    // Route leg has 3 markers: [0]=Exiting, [1]=Entering, [2]=Entered
-    // Train starts at marker_index=0 (already past the Exiting marker).
-    // Each TrainMarkerHit increments marker_index and reads the new marker's role.
+    // Route leg has 3 markers: [0]=Exiting, [1]=Entering, [2]=Entered.
+    // The train starts at marker_index=0 (already past the Exiting marker).
+    let leg = front_leg(&app);
+    assert_eq!(position(&app).leg_state(&leg), TrainLegState::ExitingStart);
 
-    let train_registry = layout_world(&app).resource::<Registry<Train>>();
-    let train_entity = train_registry.get(&TrainID(0)).unwrap();
-
-    // First hit: marker_index 0→1, markers[1].role = Entering
     layout_world_mut(&mut app).write_message(TrainMarkerHit::new(TrainID(0)));
     app.update();
-    let position = layout_world(&app)
-        .get::<TrainPosition>(train_entity)
-        .unwrap();
-    assert_eq!(position.marker_index, 1);
-    assert_eq!(position.leg_state, TrainLegState::EnteringTarget);
+    let pos = position(&app);
+    assert_eq!(pos.marker_index, 1);
+    assert_eq!(pos.leg_state(&leg), TrainLegState::EnteringTarget);
+    assert!(!pos.has_completed(&leg));
 
-    // Second hit: marker_index 1→2, markers[2].role = Entered
     layout_world_mut(&mut app).write_message(TrainMarkerHit::new(TrainID(0)));
     app.update();
-    let position = layout_world(&app)
-        .get::<TrainPosition>(train_entity)
-        .unwrap();
-    assert_eq!(position.marker_index, 2);
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
+    let pos = position(&app);
+    assert_eq!(pos.marker_index, 2);
+    assert_eq!(pos.leg_state(&leg), TrainLegState::EnteredTarget);
+    assert!(pos.has_completed(&leg));
 }
 
 #[test]
-fn advance_leg_moves_to_next() {
+fn complete_leg_pops_front_leg_and_moves_position_block() {
     let mut app = make_app();
-    enter_control_mode(&mut app, two_block_layout());
-    for _ in 0..5 {
-        app.update();
-    }
-
-    let t0 = TrackID::new(CellID::new(0, 0, 0), Orientation::EW);
-    let t1 = TrackID::new(CellID::new(1, 0, 0), Orientation::EW);
-    let t3 = TrackID::new(CellID::new(3, 0, 0), Orientation::EW);
-    let t4 = TrackID::new(CellID::new(4, 0, 0), Orientation::EW);
-    let block_a = BlockID::new(t0, t1);
-    let block_b = BlockID::new(t3, t4);
-
-    let block_data_map = extract_block_data_map(&app);
-    let marker_data_map = extract_marker_data_map(&app);
-    let logical_graph = layout_world(&app).resource::<LogicalGraph>();
-
-    let logical_a = LogicalBlockID {
-        block: block_a,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-    let logical_b = LogicalBlockID {
-        block: block_b,
-        direction: BlockDirection::Aligned,
-        facing: Facing::Forward,
-    };
-
-    // Build: idle at A, route A→B, trailing idle at B
-    let idle = RouteLeg::idle(logical_a, &block_data_map, &marker_data_map).unwrap();
-    let mut legs = build_route(
-        logical_a,
-        logical_b,
-        logical_graph,
-        &block_data_map,
-        &marker_data_map,
-    )
-    .unwrap();
-    legs.push(RouteLeg::idle(logical_b, &block_data_map, &marker_data_map).unwrap());
-
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), vec![idle]));
-    app.update();
-    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), legs));
+    let (_, logical_b, route) = placed_train_with_route(&mut app);
+    layout_world_mut(&mut app).write_message(AppendLegs::new(TrainID(0), route));
     app.update();
 
-    // Advance off idle → route leg
-    layout_world_mut(&mut app).write_message(AdvanceLeg::new(TrainID(0)));
+    layout_world_mut(&mut app).write_message(CompleteLeg::new(TrainID(0)));
     app.update();
 
-    // Advance off route leg → trailing idle
-    layout_world_mut(&mut app).write_message(AdvanceLeg::new(TrainID(0)));
-    app.update();
+    assert_eq!(position(&app), TrainPosition::at(logical_b));
+    assert_eq!(queue_len(&app), 0);
 
-    let world = layout_world(&app);
-    let train_registry = world.resource::<Registry<Train>>();
-    let train_entity = train_registry.get(&TrainID(0)).unwrap();
-    let position = world.get::<TrainPosition>(train_entity).unwrap();
-
-    // Should be on trailing idle at block B
-    assert_eq!(position.leg_state, TrainLegState::EnteredTarget);
-    assert_eq!(position.marker_index, 0);
-
-    // Current leg (first in TrainLegs) should be the trailing idle
-    let legs = world.get::<TrainLegs>(train_entity).unwrap();
-    let current_leg_entity = *legs.collection().first().unwrap();
-    let current_leg = world.get::<RouteLeg>(current_leg_entity).unwrap();
-    assert_eq!(current_leg.start_block.block_id, block_b);
-    assert_eq!(current_leg.target_block.block_id, block_b);
-    assert!(current_leg.travel.is_empty());
-
-    // Only 1 leg entity remaining (the trailing idle)
     let sub_app = app.sub_app_mut(LayoutSubApp);
     let legs_count = sub_app
         .world_mut()
         .query::<&RouteLeg>()
         .iter(sub_app.world())
         .count();
-    assert_eq!(legs_count, 1);
+    assert_eq!(legs_count, 0, "the completed leg entity is despawned");
 }

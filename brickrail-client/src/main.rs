@@ -10,7 +10,7 @@ use brickrail_common::layout::block::{Block, BlockData};
 use brickrail_common::layout::marker::{Marker, MarkerData};
 use brickrail_common::layout::track::Track;
 use brickrail_common::layout::{Layout, LayoutAppPlugin, LayoutSubApp};
-use brickrail_common::lifecycle::{ElementData, ElementEntry, ElementId};
+use brickrail_common::lifecycle::{ElementData, ElementEntry, ElementId, Registry};
 use brickrail_common::primitives::*;
 use brickrail_common::simulation::route::{RouteLeg, TrainLegs};
 use brickrail_common::simulation::train_position::TrainPosition;
@@ -258,23 +258,34 @@ fn draw_blocks(mut gizmos: Gizmos, query: Query<&ElementData<Block>>) {
     }
 }
 
+/// Draws each train at the last marker its sensor passed: within the front leg
+/// while moving, or at its position block's enter marker while standing still.
 fn draw_trains(
     mut gizmos: Gizmos,
-    query: Query<(&TrainPosition, &TrainLegs)>,
+    query: Query<(&TrainPosition, Option<&TrainLegs>)>,
     leg_query: Query<&RouteLeg>,
+    block_registry: Res<Registry<Block>>,
+    block_data_query: Query<&ElementData<Block>>,
 ) {
     for (position, legs) in &query {
-        let Some(&leg_entity) = legs.collection().first() else {
+        let front_leg = legs
+            .and_then(|legs| legs.collection().first().copied())
+            .and_then(|entity| leg_query.get(entity).ok());
+        let track = match front_leg {
+            Some(leg) => leg.markers.get(position.marker_index).map(|m| m.track),
+            None => block_registry
+                .get(&position.block.block)
+                .and_then(|entity| block_data_query.get(entity).ok())
+                .map(|data| {
+                    data.0
+                        .enter_logical_track(position.block.direction, position.block.facing)
+                        .track()
+                }),
+        };
+        let Some(track) = track else {
             continue;
         };
-        let Ok(leg) = leg_query.get(leg_entity) else {
-            continue;
-        };
-        if position.marker_index >= leg.markers.len() {
-            continue;
-        }
-        let marker = &leg.markers[position.marker_index];
-        let pos = marker.track.cell.get_vec2() * LAYOUT_SCALE;
+        let pos = track.cell.get_vec2() * LAYOUT_SCALE;
         gizmos.circle_2d(pos, 6.0, Color::srgb(1.0, 0.5, 0.0));
     }
 }
