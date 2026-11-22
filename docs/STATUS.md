@@ -26,9 +26,9 @@ guides stay in `docs/`. Conventions: the `driftless:conventions` skill.
 | Topic | Status | Next / open threads | Links |
 |---|---|---|---|
 | Route building (A*, leg construction) | shipped | Leg graph as the planning substrate; current impl walks one linear path | [train-simulation.md](train-simulation.md) |
-| Train position state (idle legs, marker hits, leg advancement) | shipped | | [train-simulation.md](train-simulation.md) |
+| Train position state (placement, marker hits, leg completion) | active | Code still models a stationary train as an idle leg; move to a stored position block, a `PlaceTrain` event and `CompleteLeg` popping the front leg | [train-simulation.md](train-simulation.md) |
 | Driver interface + virtual driver | shipped | BLE driver not started | [train-simulation.md](train-simulation.md) |
-| Locking / planner | design | Per-track lock table owned by the planner; footprint held until leg completes | [train-simulation.md](train-simulation.md) |
+| Locking / planner | design | Per-track lock table owned by the planner; footprint released when the train passes the Entered marker, whether or not a next leg is queued | [train-simulation.md](train-simulation.md) |
 | Plans, destinations, strategies | design | Leg-graph subgraph plans; schedule and random strategies | [train-simulation.md](train-simulation.md) |
 | SimulationEvent sync pipeline (fan-out, collector, SubApp extract) | shipped | | [architecture.md](architecture.md) |
 | Networking transport for SimulationEvent | idea | Replace SubApp extract with a network transport; core plugins stay unchanged | [architecture.md](architecture.md) |

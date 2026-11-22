@@ -146,7 +146,9 @@ Each leg has a **footprint** — the tracks it needs exclusively:
 
 The planner holds a per-track lock table. Before committing a leg to a train's queue, it acquires the leg's whole footprint; a leg whose footprint overlaps another train's holdings cannot be committed. Legs that share tracks — at every switch and crossing — conflict through their footprints, never through any knowledge the train has of other trains.
 
-Locks are **not** released progressively as the train's rear clears each section. A leg's footprint is held until the leg is complete — the train has entered the target block and advanced onto the next leg. This is because travel sections between blocks are not guaranteed to be long enough to contain the train — only blocks provide that guarantee. On completion, the planner releases whatever the leg held that no remaining leg of the same train still needs (the target block section is also the next leg's start section, so it stays held). The planner learns of completion from the leg advancement that movement already performs; movement does not call into the planner.
+A train holds, at any moment, the section of its **position block** (see Train Position) plus the footprints of every leg in its queue. The position block is always the start block of the front leg, so while a train is moving its holdings are exactly the union of its queued footprints; while it is standing still they are exactly its block section. Placing a train in a block acquires that block's section; a block already held by another train cannot receive a placed train.
+
+Locks are **not** released progressively as the train's rear clears each section. A leg's footprint is held until the leg is **complete** — the train has passed the leg's Entered marker, so its whole body is inside the target block. Travel sections between blocks are not guaranteed to be long enough to contain the train — only blocks provide that guarantee — and the Entered marker is by construction the first point at which the start block and travel section are provably clear. On completion the leg leaves the queue and the position block becomes its target; the planner then releases whatever the leg held that is neither the new position block nor needed by a remaining leg of the same train. Completion depends only on the Entered marker, so a train that reaches its target with an empty queue — at its destination, or waiting for the planner to acquire the next footprint — frees the sections behind it and stands in its block until a leg is appended. The planner learns of completion from the leg removal that movement already performs; movement does not call into the planner.
 
 ## Leg Construction
 
@@ -165,7 +167,7 @@ Taken together, all possible legs form the **leg graph**: nodes are logical bloc
 
 Planning operates on the leg graph, never on the track graph directly. Searching for a single track-level path to a target and splitting it at enter markers is equivalent to walking one path through the leg graph — a special case, and how the current implementation builds a linear plan.
 
-Whether legs are built once per layout and shared between trains, or built on demand per train, is a decision internal to planning and leg construction. Train movement — the leg queue, leg advancement, the driver — only ever sees legs in a train's queue and must not depend on where they came from.
+Whether legs are built once per layout and shared between trains, or built on demand per train, is a decision internal to planning and leg construction. Train movement — the leg queue, leg completion, the driver — only ever sees legs in a train's queue and must not depend on where they came from.
 
 ## State Events
 
@@ -176,7 +178,10 @@ State events describe **resulting state changes**, not causes. The server's simu
 State events use **domain IDs** (`TrainID`, `BlockID`, `TrackID`), not ECS entities. Both server and client resolve IDs to entities via their own registries. This allows state events to be serialized and sent over the network.
 
 Examples of state events:
+- `PlaceTrain` — set a train's position block; requires an empty leg queue
 - `AppendLegs` — append pre-built route legs to a train's queue
+- `TrainMarkerHit` — the train passed the next marker of its current leg
+- `CompleteLeg` — remove the front leg from the queue and set the position block to its target
 - `LockAcquired` / `LockReleased` — block/track lock changes (future)
 - `TrainStateChanged` — train movement state transitions (future)
 - `MarkerPassed` — train sensor passed a marker (future)
@@ -185,15 +190,24 @@ Examples of state events:
 
 Train behavior is driven by a layered abstraction, from low-level to high-level:
 
+### Train Position
+
+Every train on the layout has a **train position**, made of two values:
+
+- **Position block** — the logical block (block, direction, facing) the train last fully entered. A train is placed onto the layout by setting this block; from then on it changes only when a leg completes, at which point it becomes the completed leg's target.
+- **Marker index** — how far the train has progressed along the front leg of its queue: the index of the last marker its sensor passed. It is zero whenever a leg becomes the front leg, since a leg's first marker is the position block's enter marker, which the train has already passed.
+
+The position block is always the start block of the front leg. Appending to an empty queue requires the leg's start block to equal the position block; appending to a non-empty queue requires it to equal the last queued leg's target. The train's state within its leg (Exiting, Outside, Entering, Entered) is derived from the marker index and the roles of the front leg's markers.
+
+A train with an empty queue is standing still in its position block. A train with a non-empty queue is executing the front leg.
+
 ### Leg Queue
 
-The **route leg** is the atomic unit of train movement — one block-to-block traversal. A train is always assigned to a route leg. A stationary train has a single-block **idle leg**: start and target are the same block, the travel section is empty, and the only marker is the block's enter marker. The idle leg is how a stationary train is represented — its position is just a logical block, with no memory of where it came from — and advancing onto it is what completes the previous leg on arrival (letting the planner release its locks), exactly as advancing onto any other leg does.
-
-Each train has a **leg queue**: the legs it has committed to, in traversal order. The train executes legs in order, advancing to the next leg as it enters each target block. Appending a leg to the queue *is* the commit: the planner only appends a leg once it holds the leg's locks, so everything in the queue is safe to traverse. Movement — leg advancement and the driver handoff — operates on the queue alone. It has no notion of locks or of other trains; a leg in the queue is driven, full stop. Lock data may live alongside leg data in the ECS for convenience, but no movement system reads it.
+The **route leg** is the atomic unit of train movement — one block-to-block traversal. Each train has a **leg queue**: the legs it has committed to but has not yet completed, in traversal order. The train executes the front leg; when its sensor passes that leg's Entered marker the leg is complete, it is removed from the queue, and the position block becomes its target. If another leg is queued it is now the front leg and the train continues without stopping. If the queue is empty the train stands in its position block until a leg is appended. Appending a leg to the queue *is* the commit: the planner only appends a leg once it holds the leg's locks, so everything in the queue is safe to traverse. Movement — leg completion and the driver handoff — operates on the queue alone. It has no notion of locks or of other trains; a leg in the queue is driven, full stop. Lock data may live alongside leg data in the ECS for convenience, but no movement system reads it.
 
 ### Plans
 
-A **plan** is the planning layer's view of where a train is going: a subgraph of the leg graph rooted at the last committed leg's target block, in which every path leads to the destination. The planner's job is to pick an outgoing edge from the root, acquire its footprint, and commit it to the leg queue. The planner owns the lock table (see Locking); movement never touches it.
+A **plan** is the planning layer's view of where a train is going: a subgraph of the leg graph rooted at the train's **plan root** — the last queued leg's target block, or the position block when the queue is empty — in which every path leads to the destination. The planner's job is to pick an outgoing edge from the root, acquire its footprint, and commit it to the leg queue. The planner owns the lock table (see Locking); movement never touches it.
 
 A plan may be a single linear path or a graph with alternatives — which one depends on how the planner searches the leg graph (shortest path, all paths within a cost bound, etc.). With alternatives, the train makes dynamic decisions about which leg to commit next — if one branch is blocked by another train's locks, the planner can commit a different edge toward the same destination without discarding the plan. Only the committed queue is fixed; the plan beyond it can be revised at any time.
 
@@ -221,7 +235,7 @@ The **train driver** is the abstraction that bridges the simulation logic and th
 
 ### Why an Abstraction?
 
-The simulation state layer (`TrainPosition`, `TrainLegState`, `TrainMarkerHit`, `AdvanceLeg`) is hardware-agnostic — it reacts to events without knowing what produced them. The driver is what produces those events. A consistent interface means the simulation logic works identically whether trains are physical BLE devices or virtual simulations.
+The simulation state layer (`TrainPosition`, `TrainMarkerHit`, `CompleteLeg`) is hardware-agnostic — it reacts to events without knowing what produced them. The driver is what produces those events. A consistent interface means the simulation logic works identically whether trains are physical BLE devices or virtual simulations.
 
 ### Interface
 
@@ -231,7 +245,7 @@ The simulation state layer (`TrainPosition`, `TrainLegState`, `TrainMarkerHit`, 
 **Driver → Simulation state:**
 - `TrainMarkerHit` — the train passed a marker
 
-The driver does not report leg advancement — the simulation logic infers leg transitions from marker events (specifically, when the Entered marker is hit and a next leg exists). The BLE train may advance legs locally for latency reasons, but the server derives its own state independently from marker hits. A debug assertion can verify they stay in sync.
+The driver does not report leg completion — the simulation logic infers it from marker events (specifically, when the Entered marker is hit). The BLE train advances through its own leg queue locally for latency reasons, but the server derives its own state independently from marker hits. A debug assertion can verify they stay in sync.
 
 ### Driver Behavior
 

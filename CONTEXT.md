@@ -79,8 +79,17 @@ A per-type map from domain ID to entity, needed for ID-based lookup such as layo
 **Route leg**:
 One block-to-block traversal and the atomic unit of train movement. Self-contained: it carries its block sections, travel section, markers and speeds. ([train-simulation.md](docs/train-simulation.md))
 
-**Idle leg**:
-A leg whose start and target are the same block, with an empty travel section and only the block's enter marker. How a stationary train is represented.
+**Train position**:
+A train's position block plus its marker index. Fully describes where a train is, together with its leg queue.
+
+**Position block**:
+The logical block a train last fully entered. Set by placement, then updated to the target of each leg as it completes. Always the start block of the front leg.
+
+**Marker index**:
+The index of the last marker a train's sensor passed within the front leg of its queue. Zero whenever a leg becomes the front leg.
+
+**Placement**:
+Setting a train's position block while its leg queue is empty. How a train enters the layout.
 
 **Logical block**:
 A block together with a travel direction and facing; the node type of the leg graph.
@@ -104,13 +113,16 @@ A train's relationship to a block: Outside, Entering, Entered, or Exiting, defin
 The `TrainSpeed` (Slow, Cruise, Fast) attached to each leg marker at construction, resolved from block passthrough speeds. Overridden by the driver when the train intends to stop.
 
 **Leg queue**:
-The legs a train has committed to, in traversal order. Movement operates on the queue alone and knows nothing of locks or other trains.
+The legs a train has committed to and not yet completed, in traversal order. An empty queue means the train is standing in its position block. Movement operates on the queue alone and knows nothing of locks or other trains.
+
+**Front leg**:
+The first leg in a train's queue; the one the train is executing. Its start block is the train's position block.
 
 **Commit**:
 Appending a leg to a train's queue. Only the planner commits, and only once it holds the leg's locks, so every queued leg is safe to traverse.
 
-**Leg advancement**:
-The transition from the current leg to the next, inferred by the simulation when the Entered marker is hit and a next leg exists. Completes the previous leg.
+**Leg completion**:
+The moment a train passes the front leg's Entered marker, so its whole body is inside the target block. The leg leaves the queue, the position block becomes its target, and the planner releases what the leg held. Inferred by the simulation from the marker hit.
 
 ## Planning
 
@@ -118,13 +130,16 @@ The transition from the current leg to the next, inferred by the simulation when
 The layer that picks the next leg from a plan, acquires its footprint, and commits it to the leg queue. Owns the lock table. ([train-simulation.md](docs/train-simulation.md))
 
 **Footprint**:
-The tracks a leg needs exclusively: its start block section, travel section and target block section. Held in full until the leg completes.
+The tracks a leg needs exclusively: its start block section, travel section and target block section. Held in full until the leg completes. A train's total holdings are its position block's section plus the footprints of its queued legs.
 
 **Lock table**:
 The planner's per-track record of which train holds which track. Legs conflict only through overlapping footprints.
 
+**Plan root**:
+The block a plan grows from: the last queued leg's target block, or the position block when the queue is empty.
+
 **Plan**:
-A subgraph of the leg graph rooted at the last committed leg's target block in which every path leads to the destination. Only the committed queue is fixed; the plan beyond it may be revised.
+A subgraph of the leg graph rooted at the plan root in which every path leads to the destination. Only the committed queue is fixed; the plan beyond it may be revised.
 
 **Destination**:
 A target a train wants to reach: a block or set of acceptable blocks, optionally constrained by direction and facing. Drives planning.

@@ -20,7 +20,7 @@ Given a valid generated layout, pick random start/target block pairs:
 - A* either finds a path or correctly returns None (no panic)
 - Built route legs have continuous marker chains (each leg's last marker connects to the next leg's first)
 - Start and target blocks on each leg match the path
-- Idle legs are self-referential (start == target)
+- The first leg appended to an empty queue starts at the train's position block
 
 ### Simulation invariants
 
@@ -28,9 +28,9 @@ Generate a layout, build routes for one or more trains, run the virtual driver f
 
 - Train position marker_index never exceeds the current leg's marker count
 - Leg state transitions are valid (never goes backwards in the state machine)
-- A train with only one leg (no next leg queued) never advances
+- A train with an empty queue never moves; a marker hit while the queue is empty is a safety fault
 - Trains on separate non-overlapping routes never interfere with each other
-- After enough ticks with a complete route (idle + route + trailing idle), the train reaches the target block
+- After enough ticks with a complete route, the train's position block is the target block and its queue is empty
 
 ## Visual replay
 

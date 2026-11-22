@@ -268,9 +268,9 @@ fn handle_send_train_to_block(
 ) {
     for envelope in messages.read() {
         let request = &envelope.request;
-        // 1. Get train's current block from its position + current leg
+        // 1. Read the train's plan root (last queued leg target, or position block)
         // 2. A* pathfind from current block to target block
-        // 3. Build route legs + trailing idle
+        // 3. Build route legs
         // 4. Write SimulationEvent::AppendLegs
         // 5. Push CommandResponse with Ok or Err
 
