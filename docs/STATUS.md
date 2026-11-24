@@ -56,11 +56,7 @@ Full rules: the `driftless:conventions` skill.
 
 ## Inbox / Unfiled
 
-- Event schema and versioning for the client-server boundary
-- Persistent state storage format and location (cache, not save file)
-- Client reconnect mid-simulation: reconstruct render state from a snapshot
 - Exact scope of persistent state: just train block positions, or more?
 - Controlled time mode (fixed timestep / mock `Time`) for pause, slow-mo, stepping, and deterministic replay
-- Split components that mix layout and simulation data (`AssignedSchedule`, `TrackLocks`, `WaitTime`, `QueuedDestination`, `BLEHub`, `PulseMotor`)
-- Evaluate which Bluetooth library to use for the BLE driver
 - Evaluate the handwritten Rust Pybricks protocol implementation: rewrite, or sane enough to reuse? Written with little Rust async experience
+- Event recording switch: dump state events to a file for replay and debugging (RFC-0001)
