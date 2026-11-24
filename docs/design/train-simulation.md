@@ -3,15 +3,8 @@
 The train simulation moves trains across a layout safely: it knows where every
 train is, decides which moves are safe, and drives trains, physical or virtual,
 through those moves. This file defines the model it works with, from layout
-elements through movement and planning to the driver.
-
-## Layout
-
-A **track** (code: `TrackID`) is the atomic layout element: a positioned,
-oriented piece of rail. A **connection** links two tracks; the connection
-graph is what pathfinding is derived from. The **logical graph** is the
-facing-aware graph over directed tracks that pathfinding and leg construction
-operate on.
+through movement and planning to the driver. The grid, tracks, connections and
+the logical graph are defined in the [layout](layout.md) design.
 
 ## Markers
 

@@ -33,6 +33,9 @@ a separate Python process over WebSockets because Godot had no BLE; shipping
 that process with its environment and keeping it running was a major
 motivation for the first Rust rewrite, which embedded Bluetooth in the binary.
 
+The Bevy-based implementation stays in git history; it is present in full
+through commit 0fcd704 on the reset branch and removed by the reset.
+
 ## Goals and biases
 
 The developer's goals for the reset:
@@ -142,7 +145,13 @@ another's.
 
 ## Open questions
 
-None left from the deliberation. Implementation may reopen details, which
+- Which pure modules are carried from the Bevy tree into the core rather than
+  rewritten. Proposed: the primitives module (grid, tracks, connections,
+  block identity, naming), the block data type with its directed-section and
+  enter-track methods, the logical graph build function, leg construction,
+  and the train position type. Everything else is removed.
+
+Implementation may reopen details, which
 are folded into the body and decision-log while this RFC is active.
 
 ## Decisions
@@ -215,3 +224,5 @@ Confirmed so far:
     tests over the WebSocket with a virtual-driver simulation and BLE behind a
     trait with a fake; the UI gets little. Visual replay of a recorded input
     sequence stays a goal, not a first-target deliverable.
+20. Layout files need no compatibility with earlier brickrail versions. The
+    grid model and the track naming scheme are free to change.
