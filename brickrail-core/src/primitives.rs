@@ -1,12 +1,10 @@
 use core::fmt;
 use std::str::FromStr;
 
-use bevy::prelude::*;
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-#[derive(
-    Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug, Serialize, Deserialize)]
 pub struct CellID {
     pub x: i32,
     pub y: i32,
@@ -84,9 +82,7 @@ impl Cardinal {
     }
 }
 
-#[derive(
-    Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug, Serialize, Deserialize)]
 pub enum Orientation {
     NS,
     NE,
@@ -155,9 +151,7 @@ impl Orientation {
     }
 }
 
-#[derive(
-    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub enum TrackDirection {
     First,
     Last,
@@ -173,7 +167,7 @@ impl TrackDirection {
 }
 
 /// Identifies a track segment by its grid cell and orientation.
-#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Reflect)]
+#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub struct TrackID {
     pub cell: CellID,
     pub orientation: Orientation,
@@ -284,9 +278,7 @@ impl<'de> Deserialize<'de> for TrackID {
 
 /// A track with a travel direction. The direction indicates which cardinal end
 /// the travel is heading toward (First = first cardinal of orientation, Last = second).
-#[derive(
-    Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, PartialOrd, Ord, Eq, Debug, Serialize, Deserialize)]
 pub struct DirectedTrackID {
     pub track: TrackID,
     pub direction: TrackDirection,
@@ -322,9 +314,7 @@ impl DirectedTrackID {
 /// Identifies a physical connection between two tracks at a shared cell edge.
 /// Both directed tracks point toward each other across the shared edge.
 /// Normalized: track_a < track_b to avoid duplicate connections.
-#[derive(
-    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct TrackConnectionID {
     pub track_a: DirectedTrackID,
     pub track_b: DirectedTrackID,
@@ -380,18 +370,7 @@ impl TrackConnectionID {
 /// Color of a physical marker tile. Used by the train's color sensor for
 /// detection and validation. `None` acts as a wildcard (any color matches).
 #[derive(
-    Clone,
-    Copy,
-    Hash,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Debug,
-    Default,
-    Reflect,
-    Serialize,
-    Deserialize,
+    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Serialize, Deserialize,
 )]
 pub enum MarkerColor {
     #[default]
@@ -406,9 +385,7 @@ pub enum MarkerColor {
 }
 
 /// Identifies a block by the endpoint tracks of its section. Normalized: track_a <= track_b.
-#[derive(
-    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct BlockID {
     pub track_a: TrackID,
     pub track_b: TrackID,
@@ -432,9 +409,7 @@ impl BlockID {
 }
 
 /// Travel direction through a block relative to its stored section direction.
-#[derive(
-    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum BlockDirection {
     /// Traveling in the same direction as the block's `Vec<DirectedTrackID>`.
     Aligned,
@@ -460,9 +435,7 @@ pub struct LogicalBlockID {
 }
 
 /// Discrete speed level for trains.
-#[derive(
-    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum TrainSpeed {
     Slow,
     Cruise,
@@ -471,18 +444,7 @@ pub enum TrainSpeed {
 
 /// Whether a train's sensor is on the leading or trailing side relative to travel direction.
 #[derive(
-    Clone,
-    Copy,
-    Hash,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Debug,
-    Default,
-    Reflect,
-    Serialize,
-    Deserialize,
+    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Serialize, Deserialize,
 )]
 pub enum Facing {
     #[default]
@@ -501,9 +463,7 @@ impl Facing {
 
 /// A track with travel direction and train facing resolved.
 /// This is the node type for the logical graph used in pathfinding.
-#[derive(
-    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Reflect, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct LogicalTrackID {
     pub directed: DirectedTrackID,
     pub facing: Facing,
@@ -530,18 +490,7 @@ impl LogicalTrackID {
 
 /// Numeric train identifier. Human-readable name is stored in `TrainData`.
 #[derive(
-    Clone,
-    Copy,
-    Hash,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Debug,
-    Default,
-    Reflect,
-    Serialize,
-    Deserialize,
+    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Serialize, Deserialize,
 )]
 pub struct TrainID(pub u32);
 

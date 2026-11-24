@@ -1,0 +1,10 @@
+[package]
+name = "brickrail-core"
+version = "0.1.0"
+edition = "2024"
+description = "Pure components of brickrail: layout model, geometry, simulation. No I/O, no clock, no async."
+
+[dependencies]
+glam = "0.30"
+petgraph = "0.8"
+serde = { version = "1", features = ["derive"] }

@@ -17,46 +17,44 @@ Full rules: the `driftless:conventions` skill.
 
 ## Topics
 
-### Layout & lifecycle
+### Now
 
-| Topic | Status | Next / open threads | Links |
-|---|---|---|---|
-| ECS element lifecycle (spawn/despawn via messages, registries) | shipped | Move marker↔block associations from registries to ECS relationships | [ARCHITECTURE.md](../ARCHITECTURE.md) |
-| Logical graph for facing-aware pathfinding | shipped | Rebuild runs in `Last`; needs explicit ordering or a dedicated schedule | |
-| System scheduling | active | Replace brittle implicit ordering of the logical-graph rebuild | |
+| Topic | Status | Updated | Now | Links |
+|---|---|---|---|---|
+| Tech stack reset | active | 2026-11-24 | The core crate is seeded with the carried modules; the simulation, hosts and UI are rebuilt from the design next. | [RFC-0001](rfc/0001-tech-stack-reset.md), [architecture](design/architecture.md) |
 
-### Simulation
+### Core
 
-| Topic | Status | Next / open threads | Links |
-|---|---|---|---|
-| Route building (A*, leg construction) | shipped | Leg graph as the planning substrate; current impl walks one linear path | [train-simulation.md](design/train-simulation.md) |
-| Train position state (placement, marker hits, leg completion) | shipped | | [train-simulation.md](design/train-simulation.md) |
-| Driver interface + virtual driver | shipped | BLE driver not started | [train-simulation.md](design/train-simulation.md) |
-| Locking / planner | design | Per-track lock table owned by the planner; footprint released when the train passes the Entered marker, whether or not a next leg is queued | [train-simulation.md](design/train-simulation.md) |
-| Plans, destinations, strategies | design | Leg-graph subgraph plans; schedule and random strategies | [train-simulation.md](design/train-simulation.md) |
-| SimulationEvent sync pipeline (fan-out, collector, SubApp extract) | shipped | | [architecture.md](architecture.md) |
-| Networking transport for SimulationEvent | idea | Replace SubApp extract with a network transport; core plugins stay unchanged | [architecture.md](architecture.md) |
-| High-level plugin composition (simulation, client, communication layer) | design | Three tiers per element type; one top-level state plugin and one logic plugin | [ARCHITECTURE.md](../ARCHITECTURE.md) |
+| Topic | Status | Updated | Now | Links |
+|---|---|---|---|---|
+| Layout model and layout commands | deferred | 2026-11-24 | Layout commands, validation and undo go on top of the seeded primitives and graphs. | [layout](design/layout.md), [architecture](design/architecture.md) |
+| Editor geometry queries | deferred | 2026-11-24 | Snapping, picking, sections and position interpolation as core queries. | [architecture](design/architecture.md) |
+| Simulation (leg queue, position, state events) | deferred | 2026-11-24 | Reimplement as a pure component with the two-input, two-output boundary; leg construction and position are seeded. | [train simulation](design/train-simulation.md) |
+| Locking and planner | deferred | 2026-11-24 | Per-track lock table owned by the planner; footprints released on leg completion. | [train simulation](design/train-simulation.md) |
+| Plans, destinations, strategies | deferred | 2026-11-24 | Leg-graph subgraph plans with schedule and random strategies. | [train simulation](design/train-simulation.md) |
+| Virtual driver | deferred | 2026-11-24 | A host-ticked component producing marker hits from layout distances. | [train simulation](design/train-simulation.md) |
+| Layout and persistent-state files | deferred | 2026-11-24 | Versioned JSON layout file with a sibling state file, owned by the simulation's host. | [architecture](design/architecture.md) |
+| Property-based testing | deferred | 2026-11-24 | Generators and invariants run directly against core components. | [property-testing](property-testing.md) |
 
-### Commands & client
+### Hosts and UI
 
-| Topic | Status | Next / open threads | Links |
-|---|---|---|---|
-| Editor→simulation command channel | design | Command entities in client, typed enum for simulation requests; start with `SendTrainToBlock` | [command-layer-design.md](command-layer-design.md) |
-| Visualization client (gizmo-based track/block/train rendering) | shipped | Rendering approach open: gizmos vs. lyon vs. custom meshes | [client-design.md](client-design.md) |
-| Train interpolation between marker hits | idea | Client-side only; server never sends continuous position | [client-design.md](client-design.md) |
-| Client picking (hover/click) | idea | Needs a generic approach across element types | [client-design.md](client-design.md) |
-| Inspector panel | idea | egui vs. bevy_ui; how selection drives the active edit buffer | [client-design.md](client-design.md) |
+| Topic | Status | Updated | Now | Links |
+|---|---|---|---|---|
+| Host library and daemon | deferred | 2026-11-24 | Routing, timers, WebSocket, file I/O and UI serving over the core. | [architecture](design/architecture.md) |
+| BLE driver | deferred | 2026-11-24 | Pybricks codec in the core, btleplug transport in the host library. | [train simulation](design/train-simulation.md) |
+| Desktop app | deferred | 2026-11-24 | Tauri shell with the host library in-process; the first deployment target. | [architecture](design/architecture.md) |
+| Web UI | deferred | 2026-11-24 | TypeScript UI over the wasm core: Canvas2D layout, React panels. | [architecture](design/architecture.md) |
+| wasm wrapper | deferred | 2026-11-24 | A cdylib exposing mirror, geometry and layout commands with generated TypeScript types. | [architecture](design/architecture.md) |
+| Dev shell | deferred | 2026-11-24 | Rust with the wasm32 target and Node are in; wasm-bindgen-cli and Tauri build deps follow their crates. | |
 
-### Testing
+## Inbox
 
-| Topic | Status | Next / open threads | Links |
-|---|---|---|---|
-| Property-based testing | design | Generators for layouts, blocks, markers, train scenarios; controlled time for visual replay | [property-testing.md](property-testing.md) |
-
-## Inbox / Unfiled
-
-- Exact scope of persistent state: just train block positions, or more?
-- Controlled time mode (fixed timestep / mock `Time`) for pause, slow-mo, stepping, and deterministic replay
-- Evaluate the handwritten Rust Pybricks protocol implementation: rewrite, or sane enough to reuse? Written with little Rust async experience
-- Event recording switch: dump state events to a file for replay and debugging (RFC-0001)
+| Captured | Item | Topic |
+|---|---|---|
+| 2026-10-10 | Exact scope of persistent state: just train block positions, or more? | Layout and persistent-state files |
+| 2026-10-10 | Controlled time mode for pause, slow-mo, stepping, and deterministic replay | Host library and daemon |
+| 2026-10-10 | Evaluate the handwritten Rust Pybricks protocol implementation from the previous rewrite: reuse or redo? | BLE driver |
+| 2026-11-24 | Event recording switch: dump state events to a file for replay and debugging | Host library and daemon |
+| 2026-11-24 | Ordered maps or a fixed hasher in the core so replays are deterministic | Simulation (leg queue, position, state events) |
+| 2026-11-24 | Native app as a remote client of a daemon | Desktop app |
+| 2026-11-24 | Daemon discovery by mDNS, or a printed URL and QR code at startup | Host library and daemon |

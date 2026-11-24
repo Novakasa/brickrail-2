@@ -1,6 +1,5 @@
 {
   "enabledPlugins": {
-    "bevy@novakasa-plugins": true,
     "driftless@novakasa-plugins": true
   },
   "extraKnownMarketplaces": {

@@ -1,20 +1,15 @@
-use crate::lifecycle::LayoutElement;
-use crate::primitives::{
-    BlockDirection, BlockID, DirectedTrackID, Facing, LogicalTrackID, TrainSpeed,
-};
+use serde::{Deserialize, Serialize};
 
-/// Marker type for the block element kind.
-#[derive(Clone, Debug)]
-pub struct Block;
+use crate::primitives::{BlockDirection, DirectedTrackID, Facing, LogicalTrackID, TrainSpeed};
 
 /// Per-travel-direction configuration for a block.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DirectedBlockConfig {
     pub passthrough_speed: Option<TrainSpeed>,
 }
 
 /// Layout data for a block.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BlockData {
     pub name: Option<String>,
     pub section: Vec<DirectedTrackID>,
@@ -34,11 +29,9 @@ impl BlockData {
         }
     }
 
-    /// The canonical enter marker track for a given direction and facing.
-    /// This is the track where the train's sensor crosses when entering the block.
+    /// The canonical enter marker track for a given direction and facing:
+    /// the track where the train's sensor crosses when the body has fully entered.
     pub fn enter_logical_track(&self, direction: BlockDirection, facing: Facing) -> LogicalTrackID {
-        // Aligned + Forward → B (last), Aligned + Backward → A (first)
-        // Against + Forward → A (first, opposite dir), Against + Backward → B (last, opposite dir)
         match (direction, facing) {
             (BlockDirection::Aligned, Facing::Forward) => {
                 LogicalTrackID::new(*self.section.last().unwrap(), Facing::Forward)
@@ -54,9 +47,4 @@ impl BlockData {
             }
         }
     }
-}
-
-impl LayoutElement for Block {
-    type ID = BlockID;
-    type Data = BlockData;
 }

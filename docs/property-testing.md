@@ -1,6 +1,6 @@
 # Property-Based Testing
 
-Use `proptest` to generate random layouts and scenarios, then assert invariants hold. Tests run headless in CI; failed cases can be replayed visually in the client using the proptest seed.
+Use `proptest` to generate random layouts and scenarios, then assert invariants hold. Tests run headless against the core components; failed cases can be replayed visually in the UI from the proptest seed.
 
 ## Layers
 
@@ -46,11 +46,11 @@ The visual mode is also useful for exploratory testing — run random generation
 
 Headless invariant checks don't require determinism — they assert properties that must hold regardless of execution order or timing.
 
-Visual replay does require determinism. The main source of non-determinism is `Time` — the virtual driver uses delta time to accumulate distance. For reproducible runs, the simulation needs a mode where time is externally controlled (fixed timestep or mock `Time` with constant deltas). Everything else (ECS system ordering, message processing) is already deterministic via explicit `SimulationSet` ordering.
+Visual replay does require determinism. The core components are pure: time reaches the simulation only as the `now` carried on each input, and the virtual driver is advanced by whatever ticks the test passes it. A replay is therefore the recorded input sequence fed back in the same order. Map iteration order and sorting are the remaining sources of non-determinism to keep out of the core.
 
-Controlled time is also useful beyond testing: pause, slow-mo, and frame-by-frame stepping in the editor.
+Controlled time is also useful beyond testing: pause, slow-mo, and frame-by-frame stepping, all of which the host provides by controlling the clock it passes in.
 
-A useful meta-test: run the same seed twice with fixed time and assert the `SimulationEvent` sequence is identical. This catches non-determinism regressions early, before they manifest as flaky property tests.
+A useful meta-test: run the same seed twice and assert the state-event sequence is identical. This catches non-determinism regressions early, before they manifest as flaky property tests.
 
 ## Generators needed
 

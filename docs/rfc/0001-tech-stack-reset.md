@@ -145,13 +145,7 @@ another's.
 
 ## Open questions
 
-- Which pure modules are carried from the Bevy tree into the core rather than
-  rewritten. Proposed: the primitives module (grid, tracks, connections,
-  block identity, naming), the block data type with its directed-section and
-  enter-track methods, the logical graph build function, leg construction,
-  and the train position type. Everything else is removed.
-
-Implementation may reopen details, which
+None left from the deliberation. Implementation may reopen details, which
 are folded into the body and decision-log while this RFC is active.
 
 ## Decisions
@@ -226,3 +220,8 @@ Confirmed so far:
     sequence stays a goal, not a first-target deliverable.
 20. Layout files need no compatibility with earlier brickrail versions. The
     grid model and the track naming scheme are free to change.
+21. Carried from the Bevy tree into the core rather than rewritten: the
+    primitives module (grid, tracks, connections, block identity, naming),
+    the block data type with its directed-section and enter-track methods,
+    the logical graph build function, leg construction, and the train
+    position type. Everything else was removed.
